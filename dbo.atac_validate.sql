@@ -2,10 +2,6 @@ IF OBJECT_ID(N'dbo.atac_validate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_validate AS');
 GO
 ALTER PROCEDURE [dbo].[atac_validate]
-/*
-        atac_validate v21.01.01
-        (C) 2009-2021, Peter Larsson
-*/
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -28,11 +24,12 @@ CREATE TABLE    #settings
                         table_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
                         column_id INT NOT NULL,
                         column_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
+                        tag NVARCHAR(36) COLLATE DATABASE_DEFAULT NOT NULL,
                         PRIMARY KEY CLUSTERED
                         (
-                                schema_name,
-                                table_name,
-                                column_name
+                                table_id,
+                                column_id,
+                                tag
                         ),
                         new_column_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
                         is_user_defined BIT NOT NULL,
@@ -51,8 +48,6 @@ CREATE TABLE    #settings
                         log_code NCHAR(1) NULL,
                         log_text NVARCHAR(MAX) NULL
                 );
-
-CREATE UNIQUE NONCLUSTERED INDEX uix_settings ON #settings (table_id, column_id) INCLUDE (graph_id);
 
 -- Get valid configuration settings
 INSERT          #settings
@@ -81,6 +76,7 @@ SELECT          sch.name COLLATE DATABASE_DEFAULT AS schema_name,
                 tbl.name COLLATE DATABASE_DEFAULT AS table_name,
                 col.column_id,
                 col.name COLLATE DATABASE_DEFAULT AS column_name,
+                cfg.tag,
                 usr.is_user_defined,
                 COALESCE(cfg.datatype_name, usr.name COLLATE DATABASE_DEFAULT) AS datatype_name,
                 typ.name COLLATE DATABASE_DEFAULT AS system_datatype_name,
