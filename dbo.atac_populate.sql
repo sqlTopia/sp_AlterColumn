@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_populate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_populate AS');
 GO
-ALTER PROCEDURE dbo.atac_populate
+ALTER PROCEDURE [dbo].[atac_populate]
 /*
         atac_populate v21.01.01
         (C) 2009-2021, Peter Larsson
@@ -826,10 +826,4 @@ AS (
 UPDATE  cteSort
 SET     statement_id = rnk
 WHERE   statement_id <> rnk;
-GO
-
--- Set Disable database trigger as ready
-UPDATE  dbo.atac_queue
-SET     status_code = N'R'
-WHERE   action_code = N'didt';
 GO
