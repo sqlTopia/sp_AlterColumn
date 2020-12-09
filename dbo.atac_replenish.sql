@@ -2,10 +2,6 @@ IF OBJECT_ID(N'dbo.atac_replenish', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_replenish AS');
 GO
 ALTER PROCEDURE [dbo].[atac_replenish]
-/*
-        atac_replenish v21.01.01
-        (C) 2009-2021, Peter Larsson
-*/
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -16,9 +12,6 @@ IF NOT EXISTS (SELECT * FROM dbo.atac_configuration)
         BEGIN
                 RETURN;
         END;
-
--- Local helper variable
-DECLARE @iteration INT = 0;
 
 -- Local helper table
 CREATE TABLE    #graphs
@@ -31,24 +24,19 @@ CREATE TABLE    #graphs
                                 table_id,
                                 column_id,
                                 tag
-                        ),
-                        iteration INT NOT NULL
+                        )
                 );
-
-CREATE NONCLUSTERED INDEX ix_graphs ON #graphs (iteration);
 
 -- Get all valid columns from configurations
 INSERT          #graphs
                 (
                         table_id,
                         column_id,
-                        tag,
-                        iteration
+                        tag
                 )
 SELECT          col.object_id AS table_id,
                 col.column_id,
-                cfg.tag,
-                0 AS iteration
+                cfg.tag
 FROM            dbo.atac_configuration AS cfg
 INNER JOIN      sys.schemas AS sch ON sch.name COLLATE DATABASE_DEFAULT = cfg.schema_name
 INNER JOIN      sys.tables AS tbl ON tbl.schema_id = sch.schema_id
@@ -60,19 +48,15 @@ INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
 -- Find all connected columns
 WHILE ROWCOUNT_BIG() >= 1
         BEGIN
-                SET     @iteration += 1;
-
-                WITH cteGraphs(table_id, column_id, tag, iteration)
+                WITH cteGraphs(table_id, column_id, tag)
                 AS (
                         -- Parent columns
                         SELECT          fkc.referenced_object_id AS table_id,
                                         fkc.referenced_column_id AS column_id,
-                                        grp.tag,
-                                        @iteration AS iteration
+                                        grp.tag
                         FROM            #graphs AS grp
                         INNER JOIN      sys.foreign_key_columns AS fkc ON fkc.parent_object_id = grp.table_id
                                                 AND fkc.parent_column_id = grp.column_id
-                        WHERE           grp.iteration = @iteration - 1
 
                         -- Take care of table self-referencing
                         UNION
@@ -80,12 +64,10 @@ WHILE ROWCOUNT_BIG() >= 1
                         -- Child columns
                         SELECT          fkc.parent_object_id AS table_id,
                                         fkc.parent_column_id AS column_id,
-                                        grp.tag,
-                                        @iteration AS iteration
+                                        grp.tag
                         FROM            #graphs AS grp
                         INNER JOIN      sys.foreign_key_columns AS fkc ON fkc.referenced_object_id = grp.table_id
                                                 AND fkc.referenced_column_id = grp.column_id
-                        WHERE           grp.iteration = @iteration - 1
                 )
                 MERGE   #graphs AS tgt
                 USING   cteGraphs AS src ON src.table_id = tgt.table_id
@@ -95,14 +77,12 @@ WHILE ROWCOUNT_BIG() >= 1
                         THEN    INSERT  (
                                                 table_id,
                                                 column_id,
-                                                tag,
-                                                iteration
+                                                tag
                                         )
                                 VALUES  (
                                                 src.table_id,
                                                 src.column_id,
-                                                src.tag,
-                                                src.iteration
+                                                src.tag
                                         );
         END;
 
