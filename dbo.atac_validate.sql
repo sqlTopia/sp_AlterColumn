@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_validate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_validate AS');
 GO
-ALTER PROCEDURE dbo.atac_validate
+ALTER PROCEDURE [dbo].[atac_validate]
 /*
         atac_validate v21.01.01
         (C) 2009-2021, Peter Larsson
@@ -35,8 +35,7 @@ CREATE TABLE    #settings
                                 column_name
                         ),
                         new_column_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
-                        user_datatype_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
-                        system_datatype_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
+                        datatype_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
                         max_length NVARCHAR(4) COLLATE DATABASE_DEFAULT NULL,
                         precision TINYINT NULL,
                         scale TINYINT NULL,
@@ -61,8 +60,7 @@ INSERT          #settings
                         table_name,
                         column_id,
                         column_name,
-                        user_datatype_name,
-                        system_datatype_name,
+                        datatype_name,
                         max_length,
                         precision,
                         scale,
@@ -79,24 +77,22 @@ SELECT          sch.name COLLATE DATABASE_DEFAULT AS schema_name,
                 tbl.name COLLATE DATABASE_DEFAULT AS table_name,
                 col.column_id,
                 col.name COLLATE DATABASE_DEFAULT AS column_name,
-                usr.name COLLATE DATABASE_DEFAULT AS user_datatype_name,
-                typ.name COLLATE DATABASE_DEFAULT AS system_datatype_name,
+                COALESCE(cfg.datatype_name, usr.name COLLATE DATABASE_DEFAULT) AS datatype_name,
                 CASE
-                        WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'geography', N'geometry', N'image', N'ntext', N'sysname', N'text', N'xml') THEN cfg.max_length
-                        WHEN col.max_length = -1 THEN COALESCE(cfg.max_length, CAST(N'MAX' AS NVARCHAR(4)))
-                        WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN COALESCE(cfg.max_length, CAST(col.max_length / 2 AS NVARCHAR(4)))
-                        WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN COALESCE(cfg.max_length, CAST(col.max_length AS NVARCHAR(4)))
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN COALESCE(cfg.max_length, CAST(N'MAX' AS NVARCHAR(4)))
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN COALESCE(cfg.max_length, CAST(col.max_length AS NVARCHAR(4)))
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN COALESCE(cfg.max_length, CAST(col.max_length / 2 AS NVARCHAR(4)))
                         ELSE cfg.max_length
                 END AS max_length,
                 CASE 
-                        WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN COALESCE(cfg.precision, col.precision)
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN COALESCE(cfg.precision, col.precision)
                         ELSE cfg.precision
                 END AS precision,
                 CASE 
-                        WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN COALESCE(cfg.scale, col.scale)
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN COALESCE(cfg.scale, col.scale)
                         ELSE cfg.scale
                 END AS scale,
-                COALESCE(cfg.collation_name, col.name COLLATE DATABASE_DEFAULT) AS collation_name,
+                COALESCE(cfg.collation_name, col.collation_name COLLATE DATABASE_DEFAULT) AS collation_name,
                 CASE
                         WHEN col.is_nullable = 1 THEN COALESCE(cfg.is_nullable, CAST(N'yes' AS NVARCHAR(3)))
                         ELSE COALESCE(cfg.is_nullable, CAST(N'no' AS NVARCHAR(3)))
@@ -113,7 +109,6 @@ INNER JOIN      sys.tables AS tbl ON tbl.name COLLATE DATABASE_DEFAULT = cfg.tab
 INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
                         AND col.name COLLATE DATABASE_DEFAULT = cfg.column_name
 INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
-INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
 LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
 LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
 LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id;
@@ -160,18 +155,22 @@ WHERE   cnt >= 2;
 
 -- Always convert deprecated datatypes
 UPDATE  #settings
-SET     user_datatype_name =    CASE
-                                        WHEN system_datatype_name = N'image' THEN N'varbinary'
-                                        WHEN system_datatype_name = N'ntext' THEN N'nvarchar'
-                                        ELSE N'varchar'
-                                END,
+SET     datatype_name = CASE
+                                WHEN datatype_name = N'image' THEN N'varbinary'
+                                WHEN datatype_name = N'ntext' THEN N'nvarchar'
+                                ELSE N'varchar'
+                        END,
         max_length = N'MAX',
         precision = NULL,
         scale = NULL,
         xml_collection_name = NULL,
         log_code = N'W',
-        log_text = CONCAT(N'Configuration is changed from ', user_datatype_name, ' to ', system_datatype_name, '.')
-WHERE   system_datatype_name IN (N'image', N'text', N'ntext');
+        log_text =      CASE
+                                WHEN datatype_name = N'image' THEN N'Configuration is changed from image to varbinary(max).'
+                                WHEN datatype_name = N'ntext' THEN N'Configuration is changed from ntext to nvarchar(max).'
+                                ELSE N'Configuration is changed from text to varchar(max).'
+                        END
+WHERE   datatype_name IN (N'image', N'text', N'ntext');
 
 -- Validate configurations regarding datatype, collation, xml collection, default and rule are having valid names
 WITH cteInvalid(log_code, log_text, information)
@@ -187,7 +186,7 @@ AS (
                                 ELSE NULL
                         END AS information
         FROM            #settings AS cfg
-        LEFT JOIN       sys.types AS typ ON typ.name COLLATE DATABASE_DEFAULT = cfg.user_datatype_name
+        LEFT JOIN       sys.types AS typ ON typ.name COLLATE DATABASE_DEFAULT = cfg.datatype_name
         LEFT JOIN       sys.fn_helpcollations() AS hcl ON hcl.name COLLATE DATABASE_DEFAULT = cfg.collation_name
         LEFT JOIN       sys.xml_schema_collections AS xml ON xml.name COLLATE DATABASE_DEFAULT = cfg.xml_collection_name
         LEFT JOIN       sys.objects AS def ON def.name COLLATE DATABASE_DEFAULT = cfg.default_name
@@ -219,11 +218,11 @@ SET             cfg.max_length = NULL,
                 cfg.scale = NULL,
                 cfg.collation_name = NULL,
                 cfg.xml_collection_name =       CASE
-                                                        WHEN cfg.system_datatype_name = N'xml' THEN cfg.xml_collection_name
+                                                        WHEN cfg.datatype_name = N'xml' THEN cfg.xml_collection_name
                                                         ELSE NULL
                                                 END
 FROM            #settings AS cfg
-WHERE           cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier', N'xml')
+WHERE           cfg.datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier', N'xml')
                 AND cfg.log_code IS NULL;
 
 -- Validate datatypes with max_length only
@@ -239,14 +238,14 @@ SET             cfg.precision = NULL,
 FROM            #settings AS cfg
 CROSS APPLY     (
                         SELECT  CASE
-                                        WHEN cfg.system_datatype_name IN (N'binary', N'char') AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-7][0-9][0-9][0-9]' OR cfg.max_length = N'8000') THEN NULL
-                                        WHEN cfg.system_datatype_name = N'nchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000') THEN NULL
-                                        WHEN cfg.system_datatype_name = N'nvarchar' AND (cfg.max_length = N'MAX' OR cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000') THEN NULL
-                                        WHEN cfg.system_datatype_name IN (N'varbinary', N'varchar') AND (cfg.max_length = N'MAX' OR cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-7][0-9][0-9][0-9]' OR cfg.max_length = N'8000') THEN NULL
+                                        WHEN cfg.datatype_name IN (N'binary', N'char') AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-7][0-9][0-9][0-9]' OR cfg.max_length = N'8000') THEN NULL
+                                        WHEN cfg.datatype_name = N'nchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000') THEN NULL
+                                        WHEN cfg.datatype_name = N'nvarchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000' OR cfg.max_length = N'MAX') THEN NULL
+                                        WHEN cfg.datatype_name IN (N'varbinary', N'varchar') AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-7][0-9][0-9][0-9]' OR cfg.max_length = N'8000' OR cfg.max_length = N'MAX') THEN NULL
                                 ELSE N'Invalid max_length.'
                         END 
                 ) AS inf(msg)
-WHERE           cfg.system_datatype_name IN (N'binary', N'char', N'nchar', N'nvarchar', N'varbinary', N'varchar')
+WHERE           cfg.datatype_name IN (N'binary', N'char', N'nchar', N'nvarchar', N'varbinary', N'varchar')
                 AND cfg.log_code IS NULL;
 
 -- Validate datatypes with scale only
@@ -267,7 +266,7 @@ CROSS APPLY     (
                                         ELSE N'Invalid scale.'
                                 END
                 ) AS inf(msg)
-WHERE           cfg.system_datatype_name IN (N'datetime2', N'datetimeoffset', N'time')
+WHERE           cfg.datatype_name IN (N'datetime2', N'datetimeoffset', N'time')
                 AND cfg.log_code IS NULL;
 
 -- Check datatypes with precision and scale only
@@ -287,7 +286,7 @@ CROSS APPLY     (
                                         ELSE N'Invalid precision and scale.'
                                 END
                 ) AS inf(msg)
-WHERE           cfg.system_datatype_name IN (N'decimal', N'numeric')
+WHERE           cfg.datatype_name IN (N'decimal', N'numeric')
                 AND cfg.log_code IS NULL;
 
 -- Check indeterministic datatype name
@@ -295,8 +294,8 @@ WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
 AS (
         SELECT  log_code,
                 log_text,
-                MIN(COALESCE(user_datatype_name, N'')) OVER (PARTITION BY graph_id) AS mi,
-                MAX(COALESCE(user_datatype_name, N'')) OVER (PARTITION BY graph_id) AS mx,
+                MIN(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id) AS mi,
+                MAX(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id) AS mx,
                 graph_id
         FROM    #settings
         WHERE   node_count >= 2
@@ -399,7 +398,8 @@ USING   #settings AS src ON src.schema_name = tgt.schema_name
                 AND src.column_name = tgt.column_name
 WHEN    MATCHED
         THEN    UPDATE
-                SET     tgt.max_length = src.max_length,
+                SET     tgt.datatype_name = src.datatype_name,
+                        tgt.max_length = src.max_length,
                         tgt.precision = src.precision,
                         tgt.scale = src.scale,
                         tgt.collation_name = src.collation_name,
