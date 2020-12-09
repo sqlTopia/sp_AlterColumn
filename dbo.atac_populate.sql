@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_populate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_populate AS');
 GO
-ALTER PROCEDURE [dbo].[atac_populate]
+ALTER PROCEDURE dbo.atac_populate
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -265,7 +265,8 @@ AS (
                         fk.update_action, 
                         fk.delete_action,
                         cte.tag,
-                        cte.status_code
+                        cte.status_code,
+                        fk.precheck
         FROM            cteForeignKeys AS cte
         INNER JOIN      (
                                 SELECT  object_id AS foreign_key_id,
@@ -511,7 +512,7 @@ CROSS APPLY     (
                                         180,
                                         2
                                 )
-                ) AS act(action_code, sql_text, sort_order)
+                ) AS act(action_code, sql_text, sort_order, phase)
 ORDER BY        CASE
                         WHEN act.action_code = N'drix' AND cte.type_desc = N'CLUSTERED' THEN 1  -- Drop clustered last
                         WHEN act.action_code = N'drix' THEN 0
@@ -724,7 +725,7 @@ CROSS APPLY     (
                                         140,
                                         2
                                 )
-                ) AS act(action_code, sql_text, sort_order)
+                ) AS act(action_code, sql_text, sort_order, phase)
 WHERE           act.sql_text IS NOT NULL;
 
 -- Add datatype rule statements to the queue
