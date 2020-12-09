@@ -8,10 +8,6 @@ ALTER PROCEDURE dbo.sp_AlterColumn
         @number_of_executions INT = 0,
         @waitfor TIME(0) = '00:00:05'
 )
-/*
-        sp_AlterColumn v21.01.01
-        (C) 2009-2021, Peter Larsson
-*/
 AS
 
 -- Prevent unwanted resultsets back to client
