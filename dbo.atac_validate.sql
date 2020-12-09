@@ -46,7 +46,9 @@ CREATE TABLE    #settings
                         default_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
                         rule_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
                         graph_id INT NOT NULL,
-                        node_count INT NOT NULL
+                        node_count INT NOT NULL,
+                        log_code NCHAR(1) NULL,
+                        log_text NVARCHAR(MAX) NULL
                 );
 
 CREATE UNIQUE NONCLUSTERED INDEX uix_settings ON #settings (table_id, column_id) INCLUDE (graph_id);
