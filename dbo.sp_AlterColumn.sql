@@ -28,6 +28,7 @@ BEGIN TRY
         IF @verbose = 1
                 BEGIN
                         SELECT          action_code,
+                                        status_code,
                                         tag,
                                         sql_text
                         FROM            dbo.atac_queue
