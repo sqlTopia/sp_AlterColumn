@@ -41,7 +41,7 @@ FROM            dbo.atac_configuration AS cfg
 INNER JOIN      sys.schemas AS sch ON sch.name COLLATE DATABASE_DEFAULT = cfg.schema_name
 INNER JOIN      sys.tables AS tbl ON tbl.schema_id = sch.schema_id
                         AND tbl.name COLLATE DATABASE_DEFAULT = cfg.table_name
-                        AND tbl.type COLLATE DATABASE_DEFAULT = 'U'             -- Only normal tables allowed
+                        AND tbl.type COLLATE DATABASE_DEFAULT = 'U'             -- Only regular tables
 INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
                         AND col.name COLLATE DATABASE_DEFAULT = cfg.column_name;
 
