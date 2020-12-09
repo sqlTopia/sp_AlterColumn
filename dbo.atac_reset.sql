@@ -10,7 +10,7 @@ AS
 -- Prevent unwanted resultsets back to client
 SET NOCOUNT ON;
 
--- Delete one tag from atac_configuration and atac_queue
+-- Delete one tag
 IF @tag IS NOT NULL
         BEGIN
                 DELETE
@@ -24,13 +24,13 @@ IF @tag IS NOT NULL
                         AND @tag IS NOT NULL;
         END;
 
--- Delete tags in atac_queue
+-- Delete all tags and reset identity if possible
 IF @tag IS NULL OR NOT EXISTS (SELECT * FROM dbo.atac_queue)
         BEGIN
                 TRUNCATE TABLE  dbo.atac_queue;
         END;
 
--- Delete all tags in atac_configuration
+-- Delete all tags
 IF @tag IS NULL
         BEGIN
                 TRUNCATE TABLE  dbo.atac_configuration;
