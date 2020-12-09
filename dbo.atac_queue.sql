@@ -23,13 +23,8 @@ CREATE TABLE    dbo.atac_queue
                         queue_id INT IDENTITY(1, 1) NOT NULL,
                         sort_order INT NOT NULL,
                         entity NVARCHAR(392) NOT NULL,
-                        companion NVARCHAR(392) NULL CONSTRAINT ck_atac_queue_companion CHECK (companion IS NULL OR companion > N''),
                         sql_text NVARCHAR(MAX) NOT NULL CONSTRAINT ck_atac_queue_sql_text CHECK (sql_text > N''),
                         CONSTRAINT bk_atac_queue PRIMARY KEY CLUSTERED (statement_id, queue_id) WITH (DATA_COMPRESSION = PAGE),
-                        CONSTRAINT ck_atac_queue_entity_companion CHECK (
-                                                                                companion IS NULL
-                                                                                OR entity <> companion
-                                                                        ),
                         CONSTRAINT ck_atac_queue_time CHECK     (
                                                                         statement_start IS NULL AND statement_end IS NULL
                                                                         OR statement_start IS NOT NULL AND statement_end IS NULL
