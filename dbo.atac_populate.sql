@@ -163,7 +163,7 @@ SELECT  entity,
         sort_order
 FROM    (
                 VALUES  (N'', N'didt', N'DISABLE TRIGGER ALL ON DATABASE;', N'', 10),
-                        (N'', N'endt', N'ENABLE TRIGGER ALL ON DATABASE;', N'', 210)
+                        (N'', N'endt', N'ENABLE TRIGGER ALL ON DATABASE;', N'', 220)
         ) AS trg(entity, action_code, sql_text, tag, sort_order);
 
 -- Add table trigger statements to the queue
@@ -201,7 +201,7 @@ CROSS APPLY     (
                                 (
                                         N'entg',
                                         CONCAT(N'ENABLE TRIGGER ALL ON ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N';'),
-                                        190
+                                        200
                                 )
                 ) AS act(action_code, sql_text, sort_order);
 
@@ -329,13 +329,13 @@ CROSS APPLY     (
                                         CONCAT(QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
-                                        180
+                                        190
                                 ),
                                 (
                                         CONCAT(QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
-                                        180
+                                        190
                                 )
                 ) AS act(entity, action_code, sql_text, sort_order);
 
@@ -482,7 +482,7 @@ CROSS APPLY     (
                                 + CONCAT(N' (', cte.key_columns, N')', CASE WHEN cte.include_columns IS NULL THEN N'' ELSE N' INCLUDE (' + cte.include_columns + N')' END, CASE WHEN cte.filter_definition IS NULL THEN N'' ELSE N' WHERE ' + cte.filter_definition END)
                                 + CONCAT(N' ', cte.with_clause)
                                 + CONCAT(N' ', CASE WHEN cte.partition_columns IS NULL THEN N'' ELSE N'(' + cte.partition_columns + N')' END, N';'),
-                                170
+                                180
                 ) AS act(action_code, sql_text, sort_order)
 ORDER BY        CASE
                         WHEN act.action_code = N'drix' AND cte.type_desc = N'CLUSTERED' THEN 1
@@ -537,7 +537,7 @@ CROSS APPLY     (
                                 (
                                         N'crck',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N' CHECK ', cte.check_definition, N';'),
-                                        160
+                                        170
                                 )
                 ) AS act(action_code, sql_text, sort_order);
 
@@ -586,7 +586,7 @@ CROSS APPLY     (
                                 (
                                         N'crdk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N' CHECK ', cte.check_definition, N';'),
-                                        150
+                                        160
                                 )
                 ) AS act(action_code, sql_text, sort_order);
 
@@ -638,7 +638,7 @@ CROSS APPLY     (
                                 (
                                         N'crcc',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' ADD ', QUOTENAME(cte.computed_column_name), N' AS ', cte.computed_column_definition, CASE WHEN cte.is_persisted = 1 THEN N' PERSISTED;' ELSE N';' END),
-                                        140
+                                        150
                                 )
                 ) AS act(action_code, sql_text, sort_order);
 
@@ -682,7 +682,7 @@ CROSS APPLY     (
                                                 WHEN cfg.default_name > N'' AND (cfg.default_name <> def.default_name OR def.default_name IS NULL) THEN CONCAT(N'EXEC sp_binddefault @rulename = N', QUOTENAME(cfg.default_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        130
+                                        140
                                 )
                 ) AS act(action_code, sql_text, sort_order)
 WHERE           act.sql_text IS NOT NULL;
@@ -727,7 +727,7 @@ CROSS APPLY     (
                                                 WHEN cfg.rule_name > N'' AND (cfg.rule_name <> rul.rule_name OR rul.rule_name IS NULL) THEN CONCAT(N'EXEC sp_bindrule @rulename = N', QUOTENAME(cfg.rule_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        120
+                                        130
                                 )
                 ) AS act(action_code, sql_text, sort_order)
 WHERE           act.sql_text IS NOT NULL;
@@ -762,7 +762,7 @@ AS (
                         WHEN is_nullable = N'yes' THEN N' NULL' 
                         ELSE N' NOT NULL' 
                 END AS is_nullable,
-                100 AS sort_order
+                110 AS sort_order
         FROM    #settings
 )
 INSERT  dbo.atac_queue
@@ -797,7 +797,7 @@ SELECT  CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(table_name)) AS entity,
         status_code,
         CONCAT(N'EXEC sp_rename @objname = N''', REPLACE(QUOTENAME(schema_name) + N'.' + QUOTENAME(table_name) + N'.' + QUOTENAME(column_name), N'''', N''''''), N''', @newname = N', QUOTENAME(new_column_name, N''''), N', @objtype = N''COLUMN'';') AS sql_text,
         tag,
-        200 AS sort_order
+        210 AS sort_order
 FROM    #settings
 WHERE   new_column_name > N'';
 
