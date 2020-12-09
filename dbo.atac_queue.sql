@@ -21,10 +21,10 @@ CREATE TABLE    dbo.atac_queue
                         statement_time AS (DATEADD(MILLISECOND, DATEDIFF(MILLISECOND, statement_start, statement_end), CAST('00:00:00' AS TIME(3)))),
                         log_text NVARCHAR(MAX) NULL CONSTRAINT ck_atac_queue_log_text CHECK (log_text IS NULL OR log_text > N''),
                         queue_id INT IDENTITY(1, 1) NOT NULL,
-                        sort_order INT NOT NULL,
+                        sort_order TINYINT NOT NULL,
                         entity NVARCHAR(392) NOT NULL,
+                        phase TINYINT NOT NULL CONSTRAINT ck_atac_queue_phase CHECK (phase >= 1 AND phase <= 5),
                         sql_text NVARCHAR(MAX) NOT NULL CONSTRAINT ck_atac_queue_sql_text CHECK (sql_text > N''),
-                        CONSTRAINT bk_atac_queue PRIMARY KEY CLUSTERED (statement_id, queue_id) WITH (DATA_COMPRESSION = PAGE),
                         CONSTRAINT ck_atac_queue_time CHECK     (
                                                                         statement_start IS NULL AND statement_end IS NULL
                                                                         OR statement_start IS NOT NULL AND statement_end IS NULL
@@ -54,4 +54,6 @@ CREATE TABLE    dbo.atac_queue
                                                                                         OR action_code = N'endt' AND sort_order = 210   -- Enable database triggers
                                                                                 )
                 );
+GO
+CREATE CLUSTERED INDEX cx_atac_queue ON dbo.atac_queue (phase, entity, statement_id);
 GO
