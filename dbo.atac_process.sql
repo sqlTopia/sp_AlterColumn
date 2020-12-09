@@ -3,13 +3,9 @@ IF OBJECT_ID(N'dbo.atac_process', 'P') IS NULL
 GO
 ALTER PROCEDURE dbo.atac_process
 (
-        @number_of_executions INT = 0,  -- 0 means loop until no more statements are found
+        @number_of_executions INT = 0,  -- 0 = Loop until no more statements are found
         @waitfor TIME(0) = '00:00:05'
 )
-/*
-        atac_process v21.01.01
-        (C) 2009-2021, Peter Larsson
-*/
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -20,9 +16,7 @@ DECLARE @statement_id INT,
         @sql_text NVARCHAR(MAX),
         @entity NVARCHAR(392),
         @action_code NCHAR(4),
-        @delay CHAR(8) = @waitfor,
-        @retry_count TINYINT,
-        @max_retry_count TINYINT = 3;
+        @delay NCHAR(8) = @waitfor;
 
 -- Validate user supplied input parameters
 IF @number_of_executions <= 0 OR @number_of_executions IS NULL
@@ -34,9 +28,9 @@ IF @number_of_executions <= 0 OR @number_of_executions IS NULL
 DECLARE @process TABLE
         (
                 statement_id INT NOT NULL,
-                sql_text NVARCHAR(MAX) NOT NULL,
+                action_code NCHAR(4) NOT NULL,
                 entity NVARCHAR(392) NOT NULL,
-                action_code NCHAR(4) NOT NULL
+                sql_text NVARCHAR(MAX) NOT NULL
         );
 
 -- Keep processing as long as there are statements to be processed
@@ -47,15 +41,15 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                 FROM    @process;
 
                 -- Find next ready row and lock it
-                WITH cteProcess(statement_id, sql_text, entity, action_code, status_code, session_id, statement_start, log_text)
+                WITH cteProcess(statement_id, action_code, status_code, session_id, entity, statement_start, sql_text, log_text)
                 AS (
                         SELECT TOP(1)   statement_id,
-                                        sql_text,
-                                        entity,
                                         action_code,
                                         status_code,
                                         session_id,
+                                        entity,
                                         statement_start,
+                                        sql_text,
                                         log_text
                         FROM            dbo.atac_queue
                         WHERE           status_code = N'R'
@@ -67,25 +61,25 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                         statement_start = SYSDATETIME(),
                         log_text = NULL
                 OUTPUT  inserted.statement_id,
-                        inserted.sql_text,
+                        inserted.action_code,
                         inserted.entity,
-                        inserted.action_code
+                        inserted.sql_text
                 INTO    @process
                         (
                                 statement_id,
-                                sql_text,
+                                action_code,
                                 entity,
-                                action_code
+                                sql_text
                         );
 
-                -- Get statement to process
+                -- Get statement to process (aggregation is used to make certain a value is returned even if no rows)
                 SELECT  @statement_id = MAX(statement_id),
                         @sql_text = MAX(sql_text),
                         @entity = MAX(entity),
                         @action_code = MAX(action_code)
                 FROM    @process;
 
-                -- No available statement.
+                -- Statement not available 
                 IF @statement_id IS NULL
                         BEGIN
                                 IF EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R') AND action_code <> N'endt')
@@ -104,57 +98,28 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                         END;
                 ELSE
                         BEGIN
-                                -- Reset retry counter
-                                SET     @retry_count = 0;
+                                BEGIN TRY
+                                        -- Excute currenct statement
+                                        EXEC    (@sql_text);
 
-                                -- Retry until no more retries are available
-                                WHILE @retry_count < @max_retry_count
-                                        BEGIN
-                                                BEGIN TRY
-                                                        -- Excute currenct statement
-                                                        EXEC    (@sql_text);
+                                        -- Update processed and end time
+                                        UPDATE  dbo.atac_queue
+                                        SET     status_code = N'F',
+                                                statement_end = SYSDATETIME()
+                                        WHERE   statement_id = @statement_id;
 
-                                                        -- Update processed and end time
-                                                        UPDATE  dbo.atac_queue
-                                                        SET     status_code = N'F',
-                                                                statement_end = SYSDATETIME()
-                                                        WHERE   statement_id = @statement_id;
-
-                                                        -- Decrease exeuction counter
-                                                        IF @number_of_executions >= 1
-                                                                SET     @number_of_executions -= 1;
-
-                                                        BREAK;
-                                                END TRY
-                                                BEGIN CATCH
-                                                        IF ERROR_NUMBER() = 1204                -- SQL Server cannot obtain a lock resource.
-                                                                SET     @retry_count += 1;
-                                                        ELSE IF ERROR_NUMBER() = 1205           -- Resources are accessed in conflicting order on separate transactions, causing a deadlock.
-                                                                SET     @retry_count += 1;
-                                                        ELSE IF ERROR_NUMBER() = 1222           -- Another transaction held a lock on a required resource longer than this query could wait for it.
-                                                                SET     @retry_count += 1;
-                                                        ELSE
-                                                                BEGIN
-                                                                        UPDATE  dbo.atac_queue
-                                                                        SET     status_code = N'L',
-                                                                                session_id = NULL,
-                                                                                statement_start = NULL,
-                                                                                log_text = CONCAT(N'(', ERROR_NUMBER(), N') ', ERROR_MESSAGE())
-                                                                        WHERE   statement_id = @statement_id;
-
-                                                                        BREAK;
-                                                                END;
-                                                END CATCH;
-                                        END;
-
-                                IF @retry_count = @max_retry_count
-                                        BEGIN
-                                                UPDATE  dbo.atac_queue
-                                                SET     status_code = N'L',
-                                                        session_id = NULL,
-                                                        statement_start = CONCAT(N'Maximum retry counf of ', @max_retry_count, N' reached.')
-                                                WHERE   statement_id = @statement_id;
-                                        END
+                                        -- Decrease exeuction counter
+                                        IF @number_of_executions >= 1
+                                                SET     @number_of_executions -= 1;
+                                END TRY
+                                BEGIN CATCH
+                                        UPDATE  dbo.atac_queue
+                                        SET     status_code = N'L',
+                                                session_id = NULL,
+                                                statement_start = NULL,
+                                                log_text = CONCAT(N'(', ERROR_NUMBER(), N') ', ERROR_MESSAGE())
+                                        WHERE   statement_id = @statement_id;
+                                END CATCH;
                         END;
 
                 -- Unlock statements
@@ -165,12 +130,14 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                         SELECT  status_code,
                                                 ROW_NUMBER() OVER (PARTITION BY entity ORDER BY statement_id) AS rnk
                                         FROM    dbo.atac_queue
-                                        WHERE   statement_id > @statement_id
+                                        WHERE   statement_id >= @statement_id
                                                 AND action_code <> N'endt'
+                                                AND status_code IN (N'W', N'L', N'R')
                                 )
                                 UPDATE  cteProcess
                                 SET     status_code = N'R'
-                                WHERE   rnk = 1;
+                                WHERE   rnk = 1
+                                        AND status_code IN (N'L', N'R');
                         END;
                 ELSE
                         BEGIN
@@ -180,11 +147,12 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                         FROM            dbo.atac_queue
                                         WHERE           statement_id >= @statement_id
                                                         AND entity = @entity
-                                                        AND status_code = N'L'
+                                                        AND status_code IN (N'W', N'L', N'R')
                                         ORDER BY        statement_id
                                 )
                                 UPDATE  cteProcess
-                                SET     status_code = N'R';
+                                SET     status_code = N'R'
+                                WHERE   status_code IN (N'L', N'R');
                         END;
         END;
 GO
