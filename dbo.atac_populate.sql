@@ -238,7 +238,7 @@ AS (
                                 AND p.column_id = fkc.referenced_column_id
         INNER JOIN      #settings AS c ON c.table_id = fkc.parent_object_id
                                 AND c.column_id = fkc.parent_column_id
-), cteReferences(parent_schema_name, parent_table_name, child_schema_name, child_table_name, foreign_key_name, parent_columnlist, child_columnlist, update_action, delete_action, tag, status_code)
+), cteReferences(parent_schema_name, parent_table_name, child_schema_name, child_table_name, foreign_key_name, parent_columnlist, child_columnlist, update_action, delete_action, tag, status_code, precheck)
 AS (
         SELECT          cte.parent_schema_name, 
                         cte.parent_table_name,
@@ -268,7 +268,8 @@ AS (
                                                 ELSE N'ON UPDATE NO ACTION'
                                         END AS update_action,
                                         referenced_object_id AS parent_table_id,
-                                        parent_object_id AS child_table_id
+                                        parent_object_id AS child_table_id,
+                                        CONCAT(N'IF OBJECT_ID(N', QUOTENAME(name COLLATE DATABASE_DEFAULT, N''''), N', ''F'') IS ') AS precheck
                                 FROM    sys.foreign_keys
                         ) AS fk ON fk.foreign_key_id = cte.foreign_key_id
         CROSS APPLY     (
@@ -297,7 +298,6 @@ AS (
 INSERT          dbo.atac_queue
                 (
                         entity,
-                        companion,
                         action_code,
                         status_code,
                         sql_text,
@@ -305,19 +305,23 @@ INSERT          dbo.atac_queue
                         sort_order
                 )
 SELECT          act.entity,
-                CASE
-                        WHEN act.entity = act.companion THEN NULL
-                        ELSE act.companion
-                END AS companion,
                 act.action_code,
                 cte.status_code,
-                act.sql_text,
+                CASE
+                        WHEN act.action_code = N'crfk' THEN CONCAT(cte.precheck, N'NULL ', act.sql_text)
+                        ELSE CONCAT(cte.precheck, N'NOT NULL ', act.sql_text)
+                END AS sql_text,
                 cte.tag,
                 act.sort_order
 FROM            cteReferences AS cte
 CROSS APPLY     (
                         VALUES  (
                                         CONCAT(QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name)),
+                                        N'drfk',
+                                        CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N';'),
+                                        30
+                                ),
+                                (
                                         CONCAT(QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name)),
                                         N'drfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N';'),
@@ -325,12 +329,17 @@ CROSS APPLY     (
                                 ),
                                 (
                                         CONCAT(QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name)),
+                                        N'crfk',
+                                        CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
+                                        190
+                                ),
+                                (
                                         CONCAT(QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
                                         190
                                 )
-                ) AS act(entity, companion, action_code, sql_text, sort_order);
+                ) AS act(entity, action_code, sql_text, sort_order);
 
 -- Add index statements to the queue
 WITH cteIndexes(schema_name, table_id, table_name, index_id, tag, status_code)
