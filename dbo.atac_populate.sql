@@ -308,7 +308,7 @@ SELECT DISTINCT act.entity,
                 act.action_code,
                 cte.status_code,
                 CASE
-                        WHEN act.action_code = N'crtg' THEN CONCAT(cte.precheck, N'NULL ', act.sql_text)
+                        WHEN act.action_code = N'crfk' THEN CONCAT(cte.precheck, N'NULL ', act.sql_text)
                         ELSE CONCAT(cte.precheck, N'NOT NULL ', act.sql_text)
                 END AS sql_text,
                 cte.tag,
