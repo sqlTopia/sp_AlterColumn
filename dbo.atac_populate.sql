@@ -76,7 +76,7 @@ SELECT          CASE
 
                                                 INTERSECT
 
-                                                SELECT  acm.user_datatype_name, 
+                                                SELECT  acm.datatype_name, 
                                                         acm.max_length,
                                                         acm.precision,
                                                         acm.scale,
@@ -112,23 +112,22 @@ LEFT JOIN       (
                                         tbl.name COLLATE DATABASE_DEFAULT AS table_name,
                                         col.column_id,
                                         col.name COLLATE DATABASE_DEFAULT AS column_name,
-                                        usr.name COLLATE DATABASE_DEFAULT AS user_datatype_name,
+                                        usr.name COLLATE DATABASE_DEFAULT AS datatype_name,
                                         CASE
-                                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'geography', N'geometry', N'image', N'ntext', N'sysname', N'text', N'xml') THEN CAST(NULL AS NVARCHAR(4))
-                                                WHEN col.max_length = -1 THEN CAST(N'MAX' AS NVARCHAR(4))
-                                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN CAST(col.max_length / 2 AS NVARCHAR(4))
-                                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN CAST(col.max_length AS NVARCHAR(4))
+                                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN CAST(N'MAX' AS NVARCHAR(4))
+                                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN CAST(col.max_length AS NVARCHAR(4))
+                                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN CAST(col.max_length / 2 AS NVARCHAR(4))
                                                 ELSE CAST(NULL AS NVARCHAR(4))
                                         END AS max_length,
                                         CASE 
-                                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN col.precision
+                                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN col.precision
                                                 ELSE CAST(NULL AS TINYINT)
                                         END AS precision,
                                         CASE 
-                                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
+                                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
                                                 ELSE CAST(NULL AS TINYINT)
                                         END AS scale,
-                                        col.name COLLATE DATABASE_DEFAULT AS collation_name,
+                                        col.collation_name COLLATE DATABASE_DEFAULT AS collation_name,
                                         CASE
                                                 WHEN col.is_nullable = 1 THEN CAST(N'yes' AS NVARCHAR(3))
                                                 ELSE CAST(N'no' AS NVARCHAR(3))
@@ -141,7 +140,6 @@ LEFT JOIN       (
                                                 AND tbl.type COLLATE DATABASE_DEFAULT = 'U'
                         INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
                         INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
-                        INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
                         LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
                         LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
                         LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id
