@@ -14,7 +14,7 @@ IF NOT EXISTS (SELECT * FROM dbo.atac_configuration)
         END;
 
 -- Replenish always
-EXEC dbo.atac_replenish;
+EXEC    dbo.atac_replenish;
 
 -- Local helper table
 CREATE TABLE    #settings
@@ -57,6 +57,7 @@ INSERT          #settings
                         table_name,
                         column_id,
                         column_name,
+                        tag,
                         is_user_defined,
                         datatype_name,
                         system_datatype_name,
@@ -121,6 +122,7 @@ WHILE ROWCOUNT_BIG() >= 1
         BEGIN
                 WITH cteGraphs(table_id, column_id, graph_id)
                 AS (
+                        -- Parent columns
                         SELECT          fkc.referenced_object_id AS table_id,
                                         fkc.referenced_column_id AS column_id,
                                         cfg.graph_id
@@ -128,8 +130,10 @@ WHILE ROWCOUNT_BIG() >= 1
                         INNER JOIN      sys.foreign_key_columns AS fkc ON fkc.parent_object_id = cfg.table_id
                                                 AND fkc.parent_column_id = cfg.column_id
 
+                        -- Take care self-referencing
                         UNION
 
+                        -- Child columns
                         SELECT          fkc.parent_object_id AS table_id,
                                         fkc.parent_column_id AS column_id,
                                         cfg.graph_id
@@ -261,14 +265,16 @@ SET     max_length = NULL,
         collation_name = NULL,
         xml_collection_name = NULL,
         log_code =      CASE
+                                WHEN is_user_defined = 1 THEN NULL
                                 WHEN precision IS NULL OR scale IS NULL THEN N'E'
                                 ELSE NULL
                         END,
         log_text =      CASE
+                                WHEN is_user_defined = 1 THEN NULL
                                 WHEN precision IS NULL OR scale IS NULL THEN N'Invalid precision and scale.'
                                 ELSE NULL
                         END
-WHERE   datatype_name IN (N'decimal', N'numeric')
+WHERE   system_datatype_name IN (N'decimal', N'numeric')
         AND log_code IS NULL;
 
 -- Validate datatypes with scale only
@@ -278,10 +284,12 @@ SET     max_length = NULL,
         collation_name = NULL,
         xml_collection_name = NULL,
         log_code =      CASE
+                                WHEN is_user_defined = 1 THEN NULL
                                 WHEN scale <= 7 THEN NULL
                                 ELSE N'E'
                         END,
         log_text =      CASE
+                                WHEN is_user_defined = 1 THEN NULL
                                 WHEN scale <= 7 THEN NULL
                                 ELSE N'Invalid scale.'
                         END
@@ -410,7 +418,7 @@ WHEN    MATCHED
                         tgt.log_text = src.log_text
 WHEN    NOT MATCHED BY SOURCE
         THEN    UPDATE
-                SET     tgt.log_code = N'M',
+                SET     tgt.log_code = N'E',
                         tgt.log_text = N'Configuration could not be validated.';
 
 -- Clean up
