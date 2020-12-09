@@ -70,6 +70,7 @@ CREATE TABLE    dbo.atac_configuration
                                                                                                         ),
                         log_code NCHAR(1) NULL CONSTRAINT ck_atac_configuration_log_code CHECK  (
                                                                                                         log_code IS NULL
+                                                                                                        OR log_code = N'M'      -- Missing
                                                                                                         OR log_code = N'W'      -- Warning
                                                                                                         OR log_code = N'E'      -- Error
                                                                                                 ),
