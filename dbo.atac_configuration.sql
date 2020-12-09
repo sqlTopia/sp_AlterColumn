@@ -2,10 +2,6 @@ IF OBJECT_ID(N'dbo.atac_configuration', 'U') IS NOT NULL
         DROP TABLE dbo.atac_configuration;
 GO
 CREATE TABLE    dbo.atac_configuration
-                /*
-                        atac_populate v21.01.01
-                        (C) 2009-2021, Peter Larsson
-                */
                 (
                         schema_name SYSNAME NOT NULL CONSTRAINT ck_atac_configuration_schema_name CHECK (schema_name > N''),
                         table_name SYSNAME NOT NULL CONSTRAINT ck_atac_configuration_table_name CHECK (table_name > N''),
@@ -23,8 +19,8 @@ CREATE TABLE    dbo.atac_configuration
                                                                                                                         OR new_column_name > N''        -- Change column name 
                                                                                                                 ),
                         datatype_name SYSNAME NULL CONSTRAINT ck_atac_configuration_datatype_name CHECK (
-                                                                                                                datatype_name IS NULL                           -- Inherit current column setting
-                                                                                                                OR datatype_name > N''                          -- Set new datatype name
+                                                                                                                datatype_name IS NULL   -- Inherit current column setting
+                                                                                                                OR datatype_name > N''  -- Set new datatype name
                                                                                                         ),
                         max_length NVARCHAR(4) NULL CONSTRAINT ck_atac_configuration_max_length CHECK   (
                                                                                                                 max_length IS NULL                              -- Inherit current column setting
@@ -63,11 +59,11 @@ CREATE TABLE    dbo.atac_configuration
                                                                                                                 OR default_name = N''   -- Remove current setting
                                                                                                                 OR default_name > N''   -- Set new default name
                                                                                                         ),
-                        rule_name SYSNAME NULL CONSTRAINT ck_atac_configuration_rule_name CHECK         (
-                                                                                                                rule_name IS NULL     -- Inherit current setting
-                                                                                                                OR rule_name = N''    -- Remove current setting
-                                                                                                                OR rule_name > N''    -- Set new rule name
-                                                                                                        ),
+                        rule_name SYSNAME NULL CONSTRAINT ck_atac_configuration_rule_name CHECK (
+                                                                                                        rule_name IS NULL       -- Inherit current setting
+                                                                                                        OR rule_name = N''      -- Remove current setting
+                                                                                                        OR rule_name > N''      -- Set new rule name
+                                                                                                ),
                         log_code NCHAR(1) NULL CONSTRAINT ck_atac_configuration_log_code CHECK  (
                                                                                                         log_code IS NULL
                                                                                                         OR log_code = N'M'      -- Missing
