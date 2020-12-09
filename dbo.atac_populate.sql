@@ -305,7 +305,10 @@ INSERT          dbo.atac_queue
                         sort_order
                 )
 SELECT          act.entity,
-                act.companion,
+                CASE
+                        WHEN act.entity = act.companion THEN NULL
+                        ELSE act.companion
+                END AS companion,
                 act.action_code,
                 cte.status_code,
                 act.sql_text,
