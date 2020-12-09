@@ -144,7 +144,6 @@ AS (
         INNER JOIN      sys.tables AS tbl ON tbl.object_id = col.object_id
         INNER JOIN      sys.schemas AS sch ON sch.schema_id = tbl.schema_id
         INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
-        INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
         LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
         LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
         LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id
