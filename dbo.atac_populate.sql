@@ -2,10 +2,6 @@ IF OBJECT_ID(N'dbo.atac_populate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_populate AS');
 GO
 ALTER PROCEDURE [dbo].[atac_populate]
-/*
-        atac_populate v21.01.01
-        (C) 2009-2021, Peter Larsson
-*/
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -60,9 +56,7 @@ INSERT          #settings
                         rule_name
                 )
 SELECT          CASE
-                        -- Error (column could not be found)
-                        WHEN acm.column_id IS NULL THEN N'E'
-                        -- Ignored (no change in column metadata)
+                        WHEN acm.column_id IS NULL THEN N'E'                            -- Error (column could not be found)
                         WHEN EXISTS     (
                                                 SELECT  cfg.datatype_name, 
                                                         cfg.max_length,
@@ -85,9 +79,8 @@ SELECT          CASE
                                                         acm.xml_collection_name,
                                                         acm.default_name,
                                                         acm.rule_name
-                                        ) THEN N'I'
-                        -- Locked (prepared but not available)
-                        ELSE N'L'
+                                        ) THEN N'I'                                     -- Ignored (no change in column metadata)
+                        ELSE N'L'                                                       -- Locked (prepared but not available yet)
                 END AS status_code,
                 cfg.schema_name,
                 acm.table_id,
@@ -808,7 +801,7 @@ DROP TABLE      #settings;
 WITH cteDuplicates(status_code, rnk)
 AS (
         SELECT  status_code,
-                ROW_NUMBER() OVER (PARTITION BY entity, action_code, sql_text ORDER BY queue_id) AS rnk
+                ROW_NUMBER() OVER (PARTITION BY action_code, entity, sql_text ORDER BY queue_id) AS rnk
         FROM    dbo.atac_queue
         WHERE   status_code = N'L'
 )
@@ -820,7 +813,7 @@ WHERE   rnk >= 2;
 WITH cteSort(statement_id, rnk)
 AS (
         SELECT  statement_id,
-                ROW_NUMBER() OVER (ORDER BY sort_order) AS rnk
+                ROW_NUMBER() OVER (ORDER BY sort_order, entity) AS rnk
         FROM    dbo.atac_queue
 )
 UPDATE  cteSort
