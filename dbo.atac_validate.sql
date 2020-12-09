@@ -35,7 +35,9 @@ CREATE TABLE    #settings
                                 column_name
                         ),
                         new_column_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
+                        is_user_defined BIT NOT NULL,
                         datatype_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
+                        system_datatype_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL,
                         max_length NVARCHAR(4) COLLATE DATABASE_DEFAULT NULL,
                         precision TINYINT NULL,
                         scale TINYINT NULL,
@@ -60,7 +62,9 @@ INSERT          #settings
                         table_name,
                         column_id,
                         column_name,
+                        is_user_defined,
                         datatype_name,
+                        system_datatype_name,
                         max_length,
                         precision,
                         scale,
@@ -77,7 +81,9 @@ SELECT          sch.name COLLATE DATABASE_DEFAULT AS schema_name,
                 tbl.name COLLATE DATABASE_DEFAULT AS table_name,
                 col.column_id,
                 col.name COLLATE DATABASE_DEFAULT AS column_name,
+                usr.is_user_defined,
                 COALESCE(cfg.datatype_name, usr.name COLLATE DATABASE_DEFAULT) AS datatype_name,
+                typ.name COLLATE DATABASE_DEFAULT AS system_datatype_name,
                 CASE
                         WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN COALESCE(cfg.max_length, CAST(N'MAX' AS NVARCHAR(4)))
                         WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN COALESCE(cfg.max_length, CAST(col.max_length AS NVARCHAR(4)))
@@ -109,6 +115,7 @@ INNER JOIN      sys.tables AS tbl ON tbl.name COLLATE DATABASE_DEFAULT = cfg.tab
 INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
                         AND col.name COLLATE DATABASE_DEFAULT = cfg.column_name
 INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
+INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
 LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
 LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
 LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id;
@@ -156,8 +163,8 @@ WHERE   cnt >= 2;
 -- Always convert deprecated datatypes
 UPDATE  #settings
 SET     datatype_name = CASE
-                                WHEN datatype_name = N'image' THEN N'varbinary'
-                                WHEN datatype_name = N'ntext' THEN N'nvarchar'
+                                WHEN system_datatype_name = N'image' THEN N'varbinary'
+                                WHEN system_datatype_name = N'ntext' THEN N'nvarchar'
                                 ELSE N'varchar'
                         END,
         max_length = N'MAX',
@@ -165,12 +172,8 @@ SET     datatype_name = CASE
         scale = NULL,
         xml_collection_name = NULL,
         log_code = N'W',
-        log_text =      CASE
-                                WHEN datatype_name = N'image' THEN N'Configuration is changed from image to varbinary(max).'
-                                WHEN datatype_name = N'ntext' THEN N'Configuration is changed from ntext to nvarchar(max).'
-                                ELSE N'Configuration is changed from text to varchar(max).'
-                        END
-WHERE   datatype_name IN (N'image', N'text', N'ntext');
+        log_text = CONCAT(N'Configuration is changed from ', system_datatype_name, ' to ', datatype_name, '(max).')
+WHERE   system_datatype_name IN (N'image', N'text', N'ntext');
 
 -- Validate configurations regarding datatype, collation, xml collection, default and rule are having valid names
 WITH cteInvalid(log_code, log_text, information)
@@ -217,20 +220,24 @@ SET             cfg.max_length = NULL,
                 cfg.precision = NULL,
                 cfg.scale = NULL,
                 cfg.collation_name =    CASE
-                                                WHEN cfg.datatype_name = N'sysname' THEN cfg.xml_collection_name
-                                                ELSE NULL
+                                                WHEN cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml') THEN NULL
+                                                ELSE cfg.collation_name
                                         END,
                 cfg.xml_collection_name =       CASE
-                                                        WHEN cfg.datatype_name = N'xml' THEN cfg.xml_collection_name
-                                                        ELSE NULL
+                                                        WHEN cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier') THEN NULL
+                                                        ELSE cfg.xml_collection_name
                                                 END
 FROM            #settings AS cfg
-WHERE           cfg.datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier', N'xml')
+WHERE           cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier', N'xml')
                 AND cfg.log_code IS NULL;
 
 -- Validate datatypes with max_length only
 UPDATE          cfg
-SET             cfg.precision = NULL,
+SET             cfg.max_length =        CASE
+                                                WHEN cfg.is_user_defined = 1 THEN NULL
+                                                ELSE cfg.max_length
+                                        END,
+                cfg.precision = NULL,
                 cfg.scale = NULL,
                 cfg.xml_collection_name = NULL,
                 cfg.log_code =  CASE
@@ -241,6 +248,7 @@ SET             cfg.precision = NULL,
 FROM            #settings AS cfg
 CROSS APPLY     (
                         SELECT  CASE
+                                        WHEN cfg.is_user_defined = 1 THEN NULL
                                         WHEN cfg.datatype_name IN (N'binary', N'char') AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-7][0-9][0-9][0-9]' OR cfg.max_length = N'8000') THEN NULL
                                         WHEN cfg.datatype_name = N'nchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000') THEN NULL
                                         WHEN cfg.datatype_name = N'nvarchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000' OR cfg.max_length = N'MAX') THEN NULL
@@ -248,49 +256,41 @@ CROSS APPLY     (
                                 ELSE N'Invalid max_length.'
                         END 
                 ) AS inf(msg)
-WHERE           cfg.datatype_name IN (N'binary', N'char', N'nchar', N'nvarchar', N'varbinary', N'varchar')
-                AND cfg.log_code IS NULL;
-
--- Validate datatypes with scale only
-UPDATE          cfg
-SET             cfg.max_length = NULL,
-                cfg.precision = NULL,
-                cfg.collation_name = NULL,
-                cfg.xml_collection_name = NULL,
-                cfg.log_code =  CASE
-                                        WHEN cfg.scale <= 7 THEN NULL
-                                        ELSE N'E'
-                                END,
-                cfg.log_text = inf.msg
-FROM            #settings AS cfg
-CROSS APPLY     (
-                        SELECT  CASE
-                                        WHEN cfg.scale <= 7 THEN NULL
-                                        ELSE N'Invalid scale.'
-                                END
-                ) AS inf(msg)
-WHERE           cfg.datatype_name IN (N'datetime2', N'datetimeoffset', N'time')
+WHERE           cfg.system_datatype_name IN (N'binary', N'char', N'nchar', N'nvarchar', N'varbinary', N'varchar')
                 AND cfg.log_code IS NULL;
 
 -- Check datatypes with precision and scale only
-UPDATE          cfg
-SET             cfg.max_length = NULL,
-                cfg.collation_name = NULL,
-                cfg.xml_collection_name = NULL,
-                cfg.log_code =  CASE
-                                        WHEN inf.msg IS NULL THEN NULL
-                                        ELSE N'E'
-                                END,
-                cfg.log_text = inf.msg
-FROM            #settings AS cfg
-CROSS APPLY     (
-                        SELECT  CASE
-                                        WHEN cfg.precision >= 1 AND precision <= 38 AND precision >= scale THEN NULL
-                                        ELSE N'Invalid precision and scale.'
-                                END
-                ) AS inf(msg)
-WHERE           cfg.datatype_name IN (N'decimal', N'numeric')
-                AND cfg.log_code IS NULL;
+UPDATE  #settings
+SET     max_length = NULL,
+        collation_name = NULL,
+        xml_collection_name = NULL,
+        log_code =      CASE
+                                WHEN precision IS NULL OR scale IS NULL THEN N'E'
+                                ELSE NULL
+                        END,
+        log_text =      CASE
+                                WHEN precision IS NULL OR scale IS NULL THEN N'Invalid precision and scale.'
+                                ELSE NULL
+                        END
+WHERE   datatype_name IN (N'decimal', N'numeric')
+        AND log_code IS NULL;
+
+-- Validate datatypes with scale only
+UPDATE  #settings
+SET     max_length = NULL,
+        precision = NULL,
+        collation_name = NULL,
+        xml_collection_name = NULL,
+        log_code =      CASE
+                                WHEN scale <= 7 THEN NULL
+                                ELSE N'E'
+                        END,
+        log_text =      CASE
+                                WHEN scale <= 7 THEN NULL
+                                ELSE N'Invalid scale.'
+                        END
+WHERE   system_datatype_name IN (N'datetime2', N'datetimeoffset', N'time')
+        AND log_code IS NULL;
 
 -- Check indeterministic datatype name
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
@@ -419,3 +419,4 @@ WHEN    NOT MATCHED BY SOURCE
 
 -- Clean up
 DROP TABLE      #settings;
+GO
