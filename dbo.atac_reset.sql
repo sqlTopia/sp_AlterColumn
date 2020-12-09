@@ -5,10 +5,6 @@ ALTER PROCEDURE dbo.atac_reset
 (
         @tag NVARCHAR(36) = NULL
 )
-/*
-        atac_reset v21.01.01
-        (C) 2009-2021, Peter Larsson
-*/
 AS
 
 -- Prevent unwanted resultsets back to client
