@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_replenish', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_replenish AS');
 GO
-ALTER PROCEDURE dbo.atac_replenish
+ALTER PROCEDURE [dbo].[atac_replenish]
 /*
         atac_replenish v21.01.01
         (C) 2009-2021, Peter Larsson
@@ -115,18 +115,17 @@ AS (
                         grp.tag,
                         usr.name COLLATE DATABASE_DEFAULT AS datatype_name,
                         CASE
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'geography', N'geometry', N'image', N'ntext', N'sysname', N'text', N'xml') THEN CAST(NULL AS NVARCHAR(4))
-                                WHEN col.max_length = -1 THEN CAST(N'MAX' AS NVARCHAR(4))
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN CAST(col.max_length / 2 AS NVARCHAR(4))
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN CAST(col.max_length AS NVARCHAR(4))
+                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN CAST(N'MAX' AS NVARCHAR(4))
+                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN CAST(col.max_length AS NVARCHAR(4))
+                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN CAST(col.max_length / 2 AS NVARCHAR(4))
                                 ELSE CAST(NULL AS NVARCHAR(4))
                         END AS max_length,
                         CASE 
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN col.precision
+                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN col.precision
                                 ELSE CAST(NULL AS TINYINT)
                         END AS precision,
                         CASE 
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
+                                WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
                                 ELSE CAST(NULL AS TINYINT)
                         END AS scale,
                         col.collation_name COLLATE DATABASE_DEFAULT AS collation_name,
