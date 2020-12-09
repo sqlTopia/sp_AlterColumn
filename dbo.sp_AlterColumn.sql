@@ -6,7 +6,7 @@ ALTER PROCEDURE dbo.sp_AlterColumn
         @verbose BIT = 1,
         @tag NVARCHAR(36) = NULL,
         @number_of_executions INT = 0,
-        @waitfor TIME(0) = '00:00:05'
+        @waitfor TIME(3) = '00:00:02.000'
 )
 AS
 
@@ -17,10 +17,10 @@ BEGIN TRY
         -- Validate configurations
         EXEC    dbo.atac_validate;
 
-        -- Populate queue
+        -- Populate statement queue
         EXEC    dbo.atac_populate;
 
-        -- If only viewing statements
+        -- If viewing statements only
         IF @verbose = 1
                 BEGIN
                         SELECT          action_code,
