@@ -418,7 +418,7 @@ WHEN    MATCHED
                         tgt.log_text = src.log_text
 WHEN    NOT MATCHED BY SOURCE
         THEN    UPDATE
-                SET     tgt.log_code = N'E',
+                SET     tgt.log_code = N'M',
                         tgt.log_text = N'Configuration could not be validated.';
 
 -- Clean up
