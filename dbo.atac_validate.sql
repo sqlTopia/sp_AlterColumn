@@ -216,7 +216,10 @@ UPDATE          cfg
 SET             cfg.max_length = NULL,
                 cfg.precision = NULL,
                 cfg.scale = NULL,
-                cfg.collation_name = NULL,
+                cfg.collation_name =    CASE
+                                                WHEN cfg.datatype_name = N'sysname' THEN cfg.xml_collection_name
+                                                ELSE NULL
+                                        END,
                 cfg.xml_collection_name =       CASE
                                                         WHEN cfg.datatype_name = N'xml' THEN cfg.xml_collection_name
                                                         ELSE NULL
@@ -229,10 +232,6 @@ WHERE           cfg.datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N
 UPDATE          cfg
 SET             cfg.precision = NULL,
                 cfg.scale = NULL,
-                cfg.collation_name =    CASE
-                                                WHEN cfg.datatype_name = N'sysname' THEN cfg.collation_name
-                                                ELSE NULL
-                                        END,
                 cfg.xml_collection_name = NULL,
                 cfg.log_code =  CASE
                                         WHEN inf.msg IS NULL THEN NULL
@@ -420,4 +419,3 @@ WHEN    NOT MATCHED BY SOURCE
 
 -- Clean up
 DROP TABLE      #settings;
-GO
