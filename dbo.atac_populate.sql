@@ -154,23 +154,34 @@ INSERT  dbo.atac_queue
                 action_code,
                 sql_text,
                 tag,
-                sort_order
+                sort_order,
+                phase
         )
-SELECT  entity,
+SELECT  N'' AS entity,
         action_code,
         sql_text,
-        tag,
-        sort_order
+        N'' AS tag,
+        sort_order,
+        phase
 FROM    (
-                VALUES  (N'', N'didt', N'DISABLE TRIGGER ALL ON DATABASE;', N'', 10),
-                        (N'', N'endt', N'ENABLE TRIGGER ALL ON DATABASE;', N'', 210)
-        ) AS trg(entity, action_code, sql_text, tag, sort_order);
+                VALUES  (
+                                N'didt', 
+                                N'DISABLE TRIGGER ALL ON DATABASE;', 
+                                10, 
+                                1
+                        ),
+                        (
+                                N'endt', 
+                                N'ENABLE TRIGGER ALL ON DATABASE;', 
+                                210, 
+                                5
+                        )
+        ) AS act(action_code, sql_text, sort_order, phase);
 
 -- Add table trigger statements to the queue
-WITH cteTriggers(entity, schema_name, table_name, status_code, tag)
+WITH cteTriggers(schema_name, table_name, status_code, tag)
 AS (
-        SELECT DISTINCT CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(table_name)) AS entity,
-                        schema_name,
+        SELECT DISTINCT schema_name,
                         table_name,
                         status_code,
                         tag
@@ -183,27 +194,31 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
-SELECT          cte.entity,
+SELECT          CONCAT(QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name)) AS entity,
                 act.action_code,
                 cte.status_code,
                 act.sql_text,
                 cte.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            cteTriggers AS cte
 CROSS APPLY     (
                         VALUES  (
                                         N'ditg',
                                         CONCAT(N'DISABLE TRIGGER ALL ON ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N';'),
-                                        20
+                                        20,
+                                        2
                                 ),
                                 (
                                         N'entg',
                                         CONCAT(N'ENABLE TRIGGER ALL ON ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N';'),
-                                        200
+                                        200,
+                                        4
                                 )
-                ) AS act(action_code, sql_text, sort_order);
+                ) AS act(action_code, sql_text, sort_order, phase);
 
 -- Add foreign key statements to the queue
 WITH cteForeignKeys(parent_schema_name, parent_table_name, child_schema_name, child_table_name, foreign_key_id, tag, status_code)
@@ -302,7 +317,8 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
 SELECT          act.entity,
                 act.action_code,
@@ -312,34 +328,39 @@ SELECT          act.entity,
                         ELSE CONCAT(cte.precheck, N'NOT NULL ', act.sql_text)
                 END AS sql_text,
                 cte.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            cteReferences AS cte
 CROSS APPLY     (
                         VALUES  (
                                         CONCAT(QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name)),
                                         N'drfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N';'),
-                                        30
+                                        30,
+                                        2
                                 ),
                                 (
                                         CONCAT(QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name)),
                                         N'drfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N';'),
-                                        30
+                                        30,
+                                        2
                                 ),
                                 (
                                         CONCAT(QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
-                                        190
+                                        190,
+                                        3
                                 ),
                                 (
                                         CONCAT(QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
-                                        190
+                                        190,
+                                        3
                                 )
-                ) AS act(entity, action_code, sql_text, sort_order);
+                ) AS act(entity, action_code, sql_text, sort_order, phase);
 
 -- Add index statements to the queue
 WITH cteIndexes(schema_name, table_id, table_name, index_id, tag, status_code)
@@ -456,14 +477,16 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
 SELECT          CONCAT(QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name)) AS entity,
                 act.action_code,
                 cte.status_code, 
                 act.sql_text,
                 cte.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            cteReferences AS cte
 CROSS APPLY     (
                         VALUES  (
@@ -472,7 +495,8 @@ CROSS APPLY     (
                                                 WHEN cte.is_primary_key = 1 OR cte.is_unique_constraint = 1 THEN CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.index_name), N' WITH (ONLINE = OFF);')
                                                 ELSE CONCAT(N'DROP INDEX ', QUOTENAME(cte.index_name), N' ON ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH (ONLINE = OFF);')
                                         END,
-                                        40
+                                        40,
+                                        2
                                 ),
                                 (
                                         N'crix',
@@ -484,7 +508,8 @@ CROSS APPLY     (
                                         + CONCAT(N' (', cte.key_columns, N')', CASE WHEN cte.include_columns IS NULL THEN N'' ELSE N' INCLUDE (' + cte.include_columns + N')' END, CASE WHEN cte.filter_definition IS NULL THEN N'' ELSE N' WHERE ' + cte.filter_definition END)
                                         + CASE WHEN cte.with_clause >= N'' THEN cte.with_clause ELSE N'' END
                                         + CASE WHEN cte.partition_columns > N'' THEN CONCAT(N' ', cte.partition_columns, N');') ELSE N'' END,
-                                        180
+                                        180,
+                                        2
                                 )
                 ) AS act(action_code, sql_text, sort_order)
 ORDER BY        CASE
@@ -495,10 +520,9 @@ ORDER BY        CASE
                 END;
 
 -- Add check constraint statements to the queue
-WITH cteCheckConstraints(entity, schema_name, table_name, check_constraint_name, check_definition, status_code, tag)
+WITH cteCheckConstraints(schema_name, table_name, check_constraint_name, check_definition, status_code, tag)
 AS (
-        SELECT DISTINCT CONCAT(QUOTENAME(cfg.schema_name), N'.', QUOTENAME(cfg.table_name)) AS entity, 
-                        cfg.schema_name,
+        SELECT DISTINCT cfg.schema_name,
                         cfg.table_name,
                         cc.check_constraint_name,
                         cc.check_definition,
@@ -522,33 +546,36 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
-SELECT          cte.entity, 
+SELECT          CONCAT(QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name)) AS entity, 
                 act.action_code, 
                 cte.status_code, 
                 act.sql_text, 
                 cte.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            cteCheckConstraints AS cte
 CROSS APPLY     (
                         VALUES  (
                                         N'drck',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N';'),
-                                        50
+                                        50,
+                                        2
                                 ),
                                 (
                                         N'crck',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N' CHECK ', cte.check_definition, N';'),
-                                        170
+                                        170,
+                                        2
                                 )
-                ) AS act(action_code, sql_text, sort_order);
+                ) AS act(action_code, sql_text, sort_order, phase);
 
 -- Add default constraint statements to the queue
-WITH cteDefaultConstraints(entity, schema_name, table_name, check_constraint_name, check_definition, status_code, tag)
+WITH cteDefaultConstraints(schema_name, table_name, check_constraint_name, check_definition, status_code, tag)
 AS (
-        SELECT          CONCAT(QUOTENAME(cfg.schema_name), N'.', QUOTENAME(cfg.table_name)) AS entity, 
-                        cfg.schema_name,
+        SELECT          cfg.schema_name,
                         cfg.table_name,
                         dc.default_constraint_name,
                         dc.default_definition,
@@ -571,33 +598,36 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
-SELECT          cte.entity, 
+SELECT          CONCAT(QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name)) AS entity, 
                 act.action_code, 
                 cte.status_code, 
                 act.sql_text, 
                 cte.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            cteDefaultConstraints AS cte
 CROSS APPLY     (
                         VALUES  (
                                         N'drdk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' DROP CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N';'),
-                                        60
+                                        60,
+                                        2
                                 ),
                                 (
                                         N'crdk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N' CHECK ', cte.check_definition, N';'),
-                                        160
+                                        160,
+                                        2
                                 )
-                ) AS act(action_code, sql_text, sort_order);
+                ) AS act(action_code, sql_text, sort_order, phase);
 
 -- Add computed column statements to the queue
-WITH cteComputedColumns(entity, schema_name, table_name, computed_column_name, computed_column_definition, status_code, tag, is_persisted)
+WITH cteComputedColumns(schema_name, table_name, computed_column_name, computed_column_definition, status_code, tag, is_persisted)
 AS (
-        SELECT DISTINCT CONCAT(QUOTENAME(cfg.schema_name), N'.', QUOTENAME(cfg.table_name)) AS entity, 
-                        cfg.schema_name,
+        SELECT DISTINCT cfg.schema_name,
                         cfg.table_name,
                         cc.computed_column_name,
                         cc.computed_column_definition,
@@ -623,27 +653,31 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
-SELECT          cte.entity, 
+SELECT          CONCAT(QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name)) AS entity, 
                 act.action_code, 
                 cte.status_code, 
                 act.sql_text, 
                 cte.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            cteComputedColumns AS cte
 CROSS APPLY     (
                         VALUES  (
                                         N'drcc',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' DROP COLUMN ', QUOTENAME(cte.computed_column_name), N';'),
-                                        70
+                                        70,
+                                        2
                                 ),
                                 (
                                         N'crcc',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' ADD ', QUOTENAME(cte.computed_column_name), N' AS ', cte.computed_column_definition, CASE WHEN cte.is_persisted = 1 THEN N' PERSISTED;' ELSE N';' END),
-                                        150
+                                        150,
+                                        2
                                 )
-                ) AS act(action_code, sql_text, sort_order);
+                ) AS act(action_code, sql_text, sort_order, phase);
 
 -- Add datatype default statements to the queue
 INSERT          dbo.atac_queue
@@ -653,14 +687,16 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
 SELECT DISTINCT CONCAT(QUOTENAME(cfg.schema_name), N'.', QUOTENAME(cfg.table_name)) AS entity,
                 act.action_code,
                 cfg.status_code,
                 act.sql_text,
                 cfg.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            #settings AS cfg
 INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
                         AND col.column_id = cfg.column_id
@@ -676,7 +712,8 @@ CROSS APPLY     (
                                                 WHEN cfg.default_name <> def.default_name THEN CONCAT(N'EXEC sp_unbinddefault @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';') 
                                                 ELSE NULL
                                         END,
-                                        80
+                                        80,
+                                        2
                                 ),
                                 (
                                         N'bidf',
@@ -684,7 +721,8 @@ CROSS APPLY     (
                                                 WHEN cfg.default_name > N'' AND (cfg.default_name <> def.default_name OR def.default_name IS NULL) THEN CONCAT(N'EXEC sp_binddefault @rulename = N', QUOTENAME(cfg.default_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        140
+                                        140,
+                                        2
                                 )
                 ) AS act(action_code, sql_text, sort_order)
 WHERE           act.sql_text IS NOT NULL;
@@ -697,14 +735,16 @@ INSERT          dbo.atac_queue
                         status_code,
                         sql_text,
                         tag,
-                        sort_order
+                        sort_order,
+                        phase
                 )
 SELECT DISTINCT CONCAT(QUOTENAME(cfg.schema_name), N'.', QUOTENAME(cfg.table_name)) AS entity,
                 act.action_code,
                 cfg.status_code,
                 act.sql_text,
                 cfg.tag,
-                act.sort_order
+                act.sort_order,
+                act.phase
 FROM            #settings AS cfg
 INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
                         AND col.column_id = cfg.column_id
@@ -720,7 +760,8 @@ CROSS APPLY     (
                                                 WHEN cfg.rule_name <> rul.rule_name THEN CONCAT(N'EXEC sp_unbindrule @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';') 
                                                 ELSE NULL
                                         END,
-                                        90
+                                        90,
+                                        2
                                 ),
                                 (
                                         N'biru',
@@ -728,13 +769,14 @@ CROSS APPLY     (
                                                 WHEN cfg.rule_name > N'' AND (cfg.rule_name <> rul.rule_name OR rul.rule_name IS NULL) THEN CONCAT(N'EXEC sp_bindrule @rulename = N', QUOTENAME(cfg.rule_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        130
+                                        130,
+                                        2
                                 )
-                ) AS act(action_code, sql_text, sort_order)
+                ) AS act(action_code, sql_text, sort_order, phase)
 WHERE           act.sql_text IS NOT NULL;
 
 -- Add alter table alter column statements to the queue
-WITH cteAlterColumn(entity, action_code, status_code, tag, command, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name, is_nullable, sort_order)
+WITH cteAlterColumn(entity, action_code, status_code, tag, command, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name, is_nullable, sort_order, phase)
 AS (
         SELECT DISTINCT CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(table_name)) AS entity,
                         N'alco' AS action_code,
@@ -763,7 +805,8 @@ AS (
                                 WHEN is_nullable = N'yes' THEN N' NULL' 
                                 ELSE N' NOT NULL' 
                         END AS is_nullable,
-                        110 AS sort_order
+                        110 AS sort_order,
+                        2 AS phase
         FROM            #settings
 )
 INSERT  dbo.atac_queue
@@ -773,14 +816,16 @@ INSERT  dbo.atac_queue
                 status_code,
                 sql_text,
                 tag,
-                sort_order
+                sort_order,
+                phase
         )
 SELECT  entity,
         action_code,
         status_code,
         CONCAT(command, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name, is_nullable, N';') AS sql_text,
         tag,
-        sort_order
+        sort_order,
+        phase
 FROM    cteAlterColumn;
 
 -- Cleanup
