@@ -2,10 +2,6 @@ IF OBJECT_ID(N'dbo.atac_queue', 'U') IS NOT NULL
         DROP TABLE dbo.atac_queue;
 GO
 CREATE TABLE    dbo.atac_queue
-                /*
-                        atac_queue v21.01.01
-                        (C) 2009-2021, Peter Larsson
-                */
                 (
                         statement_id INT NOT NULL CONSTRAINT df_atac_queue_statement_id DEFAULT (0) CONSTRAINT ck_atac_queue_statement_id CHECK (statement_id >= 0),
                         action_code NCHAR(4) NOT NULL CONSTRAINT ck_atac_queue_action_code CHECK (action_code > N''),
@@ -30,9 +26,9 @@ CREATE TABLE    dbo.atac_queue
                         sql_text NVARCHAR(MAX) NOT NULL CONSTRAINT ck_atac_queue_sql_text CHECK (sql_text > N''),
                         CONSTRAINT bk_atac_queue PRIMARY KEY CLUSTERED (statement_id, queue_id),
                         CONSTRAINT ck_atac_queue_time CHECK     (
-                                                                        statement_start <= statement_end
+                                                                        statement_start IS NULL AND statement_end IS NULL
                                                                         OR statement_start IS NOT NULL AND statement_end IS NULL
-                                                                        OR statement_start IS NULL AND statement_end IS NULL
+                                                                        OR statement_start <= statement_end
                                                                 ),
                         CONSTRAINT ck_atac_queue_action_code_sort_order CHECK   (
                                                                                         action_code = N'didt' AND sort_order = 10       -- Disable database triggers
