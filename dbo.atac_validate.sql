@@ -150,15 +150,25 @@ WHILE ROWCOUNT_BIG() >= 1
         END;
 
 -- Calculate node count
-WITH cteNodes(node_count, cnt)
+WITH cteNodeCount(graph_id)
 AS (
-        SELECT  node_count,
-                COUNT(*) OVER (PARTITION BY graph_id) AS cnt
-        FROM    #settings
+        SELECT          graph_id
+        FROM            #settings
+        GROUP BY        graph_id,
+                        table_id,
+                        column_id
+), cteGraphCount(graph_id, node_count)
+AS (
+        SELECT          graph_id,
+                        COUNT(*) AS node_count
+        FROM            cteNodeCount
+        GROUP BY        graph_id
+        HAVING          COUNT(*) >= 2
 )
-UPDATE  cteNodes
-SET     node_count = cnt
-WHERE   cnt >= 2;
+UPDATE          cfg
+SET             cfg.node_count = cte.node_count
+FROM            #settings AS cfg
+INNER JOIN      cteGraphCount AS cte ON cte.graph_id = cfg.graph_id;
 
 -- Always convert deprecated datatypes
 UPDATE  #settings
@@ -220,35 +230,44 @@ SET             cfg.max_length = NULL,
                 cfg.precision = NULL,
                 cfg.scale = NULL,
                 cfg.collation_name =    CASE
-                                                WHEN cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml') THEN NULL
-                                                ELSE cfg.collation_name
+                                                WHEN cfg.datatype_name = N'sysname' THEN cfg.collation_name
+                                                ELSE NULL
                                         END,
                 cfg.xml_collection_name =       CASE
-                                                        WHEN cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier') THEN NULL
-                                                        ELSE cfg.xml_collection_name
+                                                        WHEN cfg.system_datatype_name = N'xml' THEN cfg.xml_collection_name
+                                                        ELSE NULL
                                                 END
 FROM            #settings AS cfg
-WHERE           cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'sysname', N'timestamp', N'uniqueidentifier', N'xml')
+WHERE           (
+                        cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml')
+                        OR cfg.datatype_name = N'sysname'
+                )
                 AND cfg.log_code IS NULL;
 
 -- Validate datatypes with max_length only
 UPDATE          cfg
 SET             cfg.max_length =        CASE
                                                 WHEN cfg.is_user_defined = 1 THEN NULL
+                                                WHEN cfg.datatype_name = N'sysname' THEN NULL
                                                 ELSE cfg.max_length
                                         END,
                 cfg.precision = NULL,
                 cfg.scale = NULL,
                 cfg.xml_collection_name = NULL,
                 cfg.log_code =  CASE
+                                        WHEN cfg.is_user_defined = 1 THEN NULL
+                                        WHEN cfg.datatype_name = N'sysname' THEN NULL
                                         WHEN inf.msg IS NULL THEN NULL
                                         ELSE N'E'
                                 END,
-                cfg.log_text = inf.msg
+                cfg.log_text =  CASE
+                                        WHEN cfg.is_user_defined = 1 THEN NULL
+                                        WHEN cfg.datatype_name = N'sysname' THEN NULL
+                                        ELSE inf.msg
+                                END
 FROM            #settings AS cfg
 CROSS APPLY     (
                         SELECT  CASE
-                                        WHEN cfg.is_user_defined = 1 THEN NULL
                                         WHEN cfg.datatype_name IN (N'binary', N'char') AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-7][0-9][0-9][0-9]' OR cfg.max_length = N'8000') THEN NULL
                                         WHEN cfg.datatype_name = N'nchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000') THEN NULL
                                         WHEN cfg.datatype_name = N'nvarchar' AND (cfg.max_length LIKE N'[1-9]' OR cfg.max_length LIKE N'[1-9][0-9]' OR cfg.max_length LIKE N'[1-9][0-9][0-9]' OR cfg.max_length LIKE N'[1-3][0-9][0-9][0-9]' OR cfg.max_length = N'4000' OR cfg.max_length = N'MAX') THEN NULL
