@@ -15,15 +15,15 @@ CREATE TABLE    dbo.atac_configuration
                                 tag
                         ),
                         new_column_name SYSNAME NULL CONSTRAINT ck_atac_configuration_new_column_name CHECK     (
-                                                                                                                        new_column_name IS NULL         -- Inherit current column setting
+                                                                                                                           new_column_name IS NULL      -- Inherit current column setting
                                                                                                                         OR new_column_name > N''        -- Change column name 
                                                                                                                 ),
                         datatype_name SYSNAME NULL CONSTRAINT ck_atac_configuration_datatype_name CHECK (
-                                                                                                                datatype_name IS NULL   -- Inherit current column setting
-                                                                                                                OR datatype_name > N''  -- Set new datatype name
+                                                                                                                   datatype_name IS NULL        -- Inherit current column setting
+                                                                                                                OR datatype_name > N''          -- Set new datatype name
                                                                                                         ),
                         max_length NVARCHAR(4) NULL CONSTRAINT ck_atac_configuration_max_length CHECK   (
-                                                                                                                max_length IS NULL                              -- Inherit current column setting
+                                                                                                                   max_length IS NULL                           -- Inherit current column setting
                                                                                                                 OR max_length LIKE N'[1-9]'                     -- Set new max_length
                                                                                                                 OR max_length LIKE N'[1-9][0-9]'                -- Set new max_length
                                                                                                                 OR max_length LIKE N'[1-9][0-9][0-9]'           -- Set new max_length
@@ -32,35 +32,35 @@ CREATE TABLE    dbo.atac_configuration
                                                                                                                 OR max_length = N'MAX'                          -- Set new max_length
                                                                                                         ),
                         precision TINYINT NULL CONSTRAINT ck_atac_configuration_precision CHECK (
-                                                                                                        precision IS NULL                       -- Inherit current column setting
+                                                                                                           precision IS NULL                    -- Inherit current column setting
                                                                                                         OR precision >= 1 AND precision <= 38   -- Set new precision
                                                                                                 ),
                         scale TINYINT NULL CONSTRAINT ck_atac_configuration_scale CHECK (
-                                                                                                scale IS NULL   -- Inherit current column setting
-                                                                                                OR scale <= 38  -- Set new scale
+                                                                                                   scale IS NULL        -- Inherit current column setting
+                                                                                                OR scale <= 38          -- Set new scale
                                                                                         ),
                         collation_name SYSNAME NULL CONSTRAINT ck_atac_configuration_collation_name CHECK       (
-                                                                                                                        collation_name IS NULL  -- Inherit current setting
-                                                                                                                        OR collation_name = N'' -- Remove current setting
-                                                                                                                        OR collation_name > N'' -- Set new collation name
+                                                                                                                           collation_name IS NULL       -- Inherit current setting
+                                                                                                                        OR collation_name = N''         -- Remove current setting
+                                                                                                                        OR collation_name > N''         -- Set new collation name
                                                                                                                 ),
                         is_nullable NVARCHAR(3) NULL CONSTRAINT ck_atac_configuration_is_nullable CHECK (
-                                                                                                                is_nullable IS NULL     -- Inherit current setting
+                                                                                                                   is_nullable IS NULL  -- Inherit current setting
                                                                                                                 OR is_nullable = N'yes' -- Set column nullable
                                                                                                                 OR is_nullable = N'no'  -- Set column non-nullable
                                                                                                         ),
                         xml_collection_name SYSNAME NULL CONSTRAINT ck_atac_configuration_xml_collection_name CHECK     (
-                                                                                                                                xml_collection_name IS NULL     -- Inherit current setting
+                                                                                                                                   xml_collection_name IS NULL  -- Inherit current setting
                                                                                                                                 OR xml_collection_name = N''    -- Remove current setting
                                                                                                                                 OR xml_collection_name > N''    -- Set new xml collection name
                                                                                                                         ),
                         default_name SYSNAME NULL CONSTRAINT ck_atac_configuration_default_name CHECK   (
-                                                                                                                default_name IS NULL    -- Inherit current setting
+                                                                                                                   default_name IS NULL -- Inherit current setting
                                                                                                                 OR default_name = N''   -- Remove current setting
                                                                                                                 OR default_name > N''   -- Set new default name
                                                                                                         ),
                         rule_name SYSNAME NULL CONSTRAINT ck_atac_configuration_rule_name CHECK (
-                                                                                                        rule_name IS NULL       -- Inherit current setting
+                                                                                                           rule_name IS NULL    -- Inherit current setting
                                                                                                         OR rule_name = N''      -- Remove current setting
                                                                                                         OR rule_name > N''      -- Set new rule name
                                                                                                 ),
@@ -72,12 +72,12 @@ CREATE TABLE    dbo.atac_configuration
                                                                                                 ),
                         log_text NVARCHAR(MAX) NULL,
                         CONSTRAINT ck_atac_configuration_precision_scale CHECK  (
-                                                                                        precision IS NULL AND scale IS NULL     -- Other datatypes including user defined
-                                                                                        OR precision IS NULL AND scale <= 7     -- Datetime2, DatetimeOffset and Time
-                                                                                        OR precision >= scale                   -- Decimal and numeric
+                                                                                           precision IS NULL AND scale IS NULL  -- Inherit current setting
+                                                                                        OR precision IS NULL AND scale <= 7     -- Set new precision and scale
+                                                                                        OR precision >= scale                   -- Set new precision and scale
                                                                                 ),
                         CONSTRAINT ck_atac_configuration_logtext CHECK  (
-                                                                                log_code IS NULL AND log_text IS NULL
+                                                                                   log_code IS NULL AND log_text IS NULL
                                                                                 OR log_code IS NOT NULL AND log_text > N''
                                                                         )
                 );
