@@ -173,8 +173,8 @@ FROM    (
                         (
                                 N'endt', 
                                 N'ENABLE TRIGGER ALL ON DATABASE;', 
-                                210, 
-                                5
+                                220, 
+                                4
                         )
         ) AS act(action_code, sql_text, sort_order, phase);
 
@@ -215,8 +215,8 @@ CROSS APPLY     (
                                 (
                                         N'entg',
                                         CONCAT(N'ENABLE TRIGGER ALL ON ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N';'),
-                                        200,
-                                        4
+                                        210,
+                                        3
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase);
 
@@ -289,10 +289,12 @@ AS (
                                 FROM    sys.foreign_keys
                         ) AS fk ON fk.foreign_key_id = cte.foreign_key_id
         CROSS APPLY     (
-                                SELECT          CONCAT(N', ', QUOTENAME(col.name COLLATE DATABASE_DEFAULT))
+                                SELECT          CONCAT(N', ', QUOTENAME(COALESCE(p.new_column_name, col.name COLLATE DATABASE_DEFAULT)))
                                 FROM            sys.foreign_key_columns AS pfk
                                 INNER JOIN      sys.columns AS col ON col.object_id = pfk.referenced_object_id
                                                         AND col.column_id = pfk.referenced_column_id
+                                LEFT JOIN       #settings AS p ON p.table_id = col.object_id
+                                                        AND p.column_id = col.column_id
                                 WHERE           pfk.constraint_object_id = fk.foreign_key_id
                                                 AND pfk.referenced_object_id = fk.parent_table_id
                                 ORDER BY        pfk.constraint_column_id
@@ -300,10 +302,12 @@ AS (
                                                 TYPE
                         ) AS p(columnlist)
         CROSS APPLY     (
-                                SELECT          CONCAT(N', ', QUOTENAME(col.name COLLATE DATABASE_DEFAULT))
+                                SELECT          CONCAT(N', ', QUOTENAME(COALESCE(c.new_column_name, col.name COLLATE DATABASE_DEFAULT)))
                                 FROM            sys.foreign_key_columns AS cfk
                                 INNER JOIN      sys.columns AS col ON col.object_id = cfk.parent_object_id
                                                         AND col.column_id = cfk.parent_column_id
+                                LEFT JOIN       #settings AS c ON c.table_id = col.object_id
+                                                        AND c.column_id = col.column_id
                                 WHERE           cfk.constraint_object_id = fk.foreign_key_id
                                                 AND cfk.parent_object_id = fk.child_table_id
                                 ORDER BY        cfk.constraint_column_id
@@ -351,14 +355,14 @@ CROSS APPLY     (
                                         CONCAT(QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
-                                        190,
+                                        200,
                                         3
                                 ),
                                 (
                                         CONCAT(QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name)),
                                         N'crfk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.child_schema_name), N'.', QUOTENAME(cte.child_table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.foreign_key_name), N' FOREIGN KEY (', cte.child_columnlist, N') REFERENCES ', QUOTENAME(cte.parent_schema_name), N'.', QUOTENAME(cte.parent_table_name), N' (', cte.parent_columnlist, N') ', cte.update_action, N' ', cte.delete_action, N';'),
-                                        190,
+                                        200,
                                         3
                                 )
                 ) AS act(entity, action_code, sql_text, sort_order, phase);
@@ -387,7 +391,7 @@ AS (
                         ind.is_unique_constraint,
                         ind.type_desc,
                         ind.filter_definition,
-                        CONCAT(N'WITH (PAD_INDEX = ' + CASE WHEN ind.is_padded = 1 THEN N'ON' ELSE N'OFF' END, N', STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = ON, IGNORE_DUP_KEY = ', CASE WHEN ind.ignore_dup_key = 1 THEN N'ON' ELSE N'OFF' END, N', ONLINE = OFF, ALLOW_ROW_LOCKS = ', CASE WHEN ind.allow_row_locks = 1 THEN N'ON' ELSE N'OFF' END, N', ALLOW_PAGE_LOCKS = ', CASE WHEN ind.allow_page_locks = 1 THEN N'ON' ELSE N'OFF' END, N', FILLFACTOR = ', CASE WHEN ind.fill_factor = 0 THEN N'100' ELSE CAST(ind.fill_factor AS NVARCHAR(3)) END, comp.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), N')') AS with_clause,
+                        CONCAT(N' WITH (PAD_INDEX = ' + CASE WHEN ind.is_padded = 1 THEN N'ON' ELSE N'OFF' END, N', STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = ON, IGNORE_DUP_KEY = ', CASE WHEN ind.ignore_dup_key = 1 THEN N'ON' ELSE N'OFF' END, N', ONLINE = OFF, ALLOW_ROW_LOCKS = ', CASE WHEN ind.allow_row_locks = 1 THEN N'ON' ELSE N'OFF' END, N', ALLOW_PAGE_LOCKS = ', CASE WHEN ind.allow_page_locks = 1 THEN N'ON' ELSE N'OFF' END, N', FILLFACTOR = ', CASE WHEN ind.fill_factor = 0 THEN N'100' ELSE CAST(ind.fill_factor AS NVARCHAR(3)) END, comp.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), N')') AS with_clause,
                         CONCAT(N'ON ', QUOTENAME(ds.data_space_name)) AS on_clause,
                         STUFF(k.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), 1, 2, N'') AS key_columns,
                         STUFF(i.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), 1, 2, N'') AS include_columns,
@@ -420,10 +424,12 @@ AS (
                                 FROM    sys.data_spaces 
                         ) AS ds ON ds.data_space_id = ind.data_space_id
         OUTER APPLY     (
-                                SELECT          CONCAT(N', ', QUOTENAME(col.name COLLATE DATABASE_DEFAULT), CASE WHEN ic.is_descending_key = 1 THEN N' DESC' ELSE N' ASC' END)
+                                SELECT          CONCAT(N', ', QUOTENAME(COALESCE(s.new_column_name, col.name COLLATE DATABASE_DEFAULT)), CASE WHEN ic.is_descending_key = 1 THEN N' DESC' ELSE N' ASC' END)
                                 FROM            sys.index_columns AS ic
                                 INNER JOIN      sys.columns AS col ON col.object_id = ic.object_id
                                                         AND col.column_id = ic.column_id
+                                LEFT JOIN       #settings AS s ON s.table_id = col.object_id
+                                                        AND s.column_id = col.column_id
                                 WHERE           ic.object_id = ind.table_id
                                                 AND ic.index_id = ind.index_id
                                                 AND ic.key_ordinal >= 1
@@ -432,10 +438,12 @@ AS (
                                                 TYPE
                         ) AS k(content)
         OUTER APPLY     (
-                                SELECT          CONCAT(N', ', QUOTENAME(col.name COLLATE DATABASE_DEFAULT))
+                                SELECT          CONCAT(N', ', QUOTENAME(COALESCE(s.new_column_name, col.name COLLATE DATABASE_DEFAULT)))
                                 FROM            sys.index_columns AS ic
                                 INNER JOIN      sys.columns AS col ON col.object_id = ic.object_id
                                                         AND col.column_id = ic.column_id
+                                LEFT JOIN       #settings AS s ON s.table_id = col.object_id
+                                                        AND s.column_id = col.column_id
                                 WHERE           ic.object_id = ind.table_id
                                                 AND ic.index_id = ind.index_id
                                                 AND ic.is_included_column = 1
@@ -444,10 +452,12 @@ AS (
                                                 TYPE
                         ) AS i(content)
         OUTER APPLY     (
-                                SELECT          CONCAT(N', ', QUOTENAME(col.name COLLATE DATABASE_DEFAULT))
+                                SELECT          CONCAT(N', ', QUOTENAME(COALESCE(s.new_column_name, col.name COLLATE DATABASE_DEFAULT)))
                                 FROM            sys.index_columns AS ic
                                 INNER JOIN      sys.columns AS col ON col.object_id = ic.object_id
                                                         AND col.column_id = ic.column_id
+                                LEFT JOIN       #settings AS s ON s.table_id = col.object_id
+                                                        AND s.column_id = col.column_id
                                 WHERE           ic.object_id = ind.table_id
                                                 AND ic.index_id = ind.index_id
                                                 AND ic.partition_ordinal >= 1
@@ -509,7 +519,7 @@ CROSS APPLY     (
                                         + CONCAT(N' (', cte.key_columns, N')', CASE WHEN cte.include_columns IS NULL THEN N'' ELSE N' INCLUDE (' + cte.include_columns + N')' END, CASE WHEN cte.filter_definition IS NULL THEN N'' ELSE N' WHERE ' + cte.filter_definition END)
                                         + CASE WHEN cte.with_clause >= N'' THEN cte.with_clause ELSE N'' END
                                         + CASE WHEN cte.partition_columns > N'' THEN CONCAT(N' ', cte.partition_columns, N');') ELSE N'' END,
-                                        180,
+                                        190,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase)
@@ -519,14 +529,17 @@ ORDER BY        CASE
                         WHEN act.action_code = N'crix' AND cte.type_desc = N'CLUSTERED' THEN 0  -- Create clustered first
                         ELSE 1
                 END;
-
+                
 -- Add check constraint statements to the queue
 WITH cteCheckConstraints(schema_name, table_name, check_constraint_name, check_definition, status_code, tag)
 AS (
         SELECT DISTINCT cfg.schema_name,
                         cfg.table_name,
                         cc.check_constraint_name,
-                        cc.check_definition,
+                        CASE
+                                WHEN cfg.new_column_name IS NULL THEN cc.check_definition
+                                ELSE REPLACE(cc.check_definition, QUOTENAME(cfg.column_name), QUOTENAME(cfg.new_column_name))
+                        END AS check_definition,
                         cfg.status_code,
                         cfg.tag
         FROM            #settings AS cfg
@@ -540,6 +553,7 @@ AS (
         WHERE           cfg.column_id = cc.column_id 
                         OR CHARINDEX(QUOTENAME(cfg.column_name), cc.check_definition) >= 1
 )
+
 INSERT          dbo.atac_queue
                 (
                         entity,
@@ -568,7 +582,7 @@ CROSS APPLY     (
                                 (
                                         N'crck',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N' CHECK ', cte.check_definition, N';'),
-                                        170,
+                                        180,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase);
@@ -620,7 +634,7 @@ CROSS APPLY     (
                                 (
                                         N'crdk',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' WITH CHECK ADD CONSTRAINT ', QUOTENAME(cte.check_constraint_name), N' CHECK ', cte.check_definition, N';'),
-                                        160,
+                                        170,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase);
@@ -631,7 +645,10 @@ AS (
         SELECT DISTINCT cfg.schema_name,
                         cfg.table_name,
                         cc.computed_column_name,
-                        cc.computed_column_definition,
+                        CASE
+                                WHEN cfg.new_column_name IS NULL THEN cc.computed_column_definition
+                                ELSE REPLACE(cc.computed_column_definition, QUOTENAME(cfg.column_name), QUOTENAME(cfg.new_column_name))
+                        END AS computed_column_definition,
                         cfg.status_code,
                         cfg.tag,
                         cc.is_persisted
@@ -675,7 +692,7 @@ CROSS APPLY     (
                                 (
                                         N'crcc',
                                         CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' ADD ', QUOTENAME(cte.computed_column_name), N' AS ', cte.computed_column_definition, CASE WHEN cte.is_persisted = 1 THEN N' PERSISTED;' ELSE N';' END),
-                                        150,
+                                        160,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase);
@@ -719,10 +736,10 @@ CROSS APPLY     (
                                 (
                                         N'bidf',
                                         CASE 
-                                                WHEN cfg.default_name > N'' AND (cfg.default_name <> def.default_name OR def.default_name IS NULL) THEN CONCAT(N'EXEC sp_binddefault @rulename = N', QUOTENAME(cfg.default_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';')
+                                                WHEN cfg.default_name > N'' AND (cfg.default_name <> def.default_name OR def.default_name IS NULL) THEN CONCAT(N'EXEC sp_binddefault @rulename = N', QUOTENAME(cfg.default_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(COALESCE(cfg.new_column_name, cfg.column_name)), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        140,
+                                        150,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase)
@@ -767,10 +784,10 @@ CROSS APPLY     (
                                 (
                                         N'biru',
                                         CASE 
-                                                WHEN cfg.rule_name > N'' AND (cfg.rule_name <> rul.rule_name OR rul.rule_name IS NULL) THEN CONCAT(N'EXEC sp_bindrule @rulename = N', QUOTENAME(cfg.rule_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(cfg.column_name), N'''', N''''''), N''';')
+                                                WHEN cfg.rule_name > N'' AND (cfg.rule_name <> rul.rule_name OR rul.rule_name IS NULL) THEN CONCAT(N'EXEC sp_bindrule @rulename = N', QUOTENAME(cfg.rule_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cfg.schema_name) + N'.' + QUOTENAME(cfg.table_name) + N'.' + QUOTENAME(COALESCE(cfg.new_column_name, cfg.column_name)), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        130,
+                                        10,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase)
@@ -828,6 +845,27 @@ SELECT  entity,
         sort_order,
         phase
 FROM    cteAlterColumn;
+
+-- Add rename column statements to the queue
+INSERT  dbo.atac_queue
+        (
+                entity,
+                action_code,
+                status_code,
+                sql_text,
+                tag,
+                sort_order,
+                phase
+        )
+SELECT  CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(table_name)) AS entity,
+        N'reco' AS action_code,
+        status_code,
+        CONCAT(N'EXEC sp_rename @objname = N''', REPLACE(QUOTENAME(schema_name) + N'.' + QUOTENAME(table_name) + N'.' + QUOTENAME(column_name), N'''', N''''''), N''', @newname = N', QUOTENAME(new_column_name, N''''), N', @objtype = N''COLUMN'';') AS sql_text,
+        tag,
+        130 AS sort_order,
+        2 AS phase
+FROM    #settings
+WHERE   new_column_name > N'';
 
 -- Cleanup
 DROP TABLE      #settings;
