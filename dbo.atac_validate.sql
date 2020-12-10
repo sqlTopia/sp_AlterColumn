@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_validate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_validate AS');
 GO
-ALTER PROCEDURE [dbo].[atac_validate]
+ALTER PROCEDURE dbo.atac_validate
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -58,6 +58,7 @@ INSERT          #settings
                         column_id,
                         column_name,
                         tag,
+                        new_column_name,
                         is_user_defined,
                         datatype_name,
                         system_datatype_name,
@@ -78,6 +79,7 @@ SELECT          sch.name COLLATE DATABASE_DEFAULT AS schema_name,
                 col.column_id,
                 col.name COLLATE DATABASE_DEFAULT AS column_name,
                 cfg.tag,
+                cfg.new_column_name,
                 usr.is_user_defined,
                 COALESCE(cfg.datatype_name, usr.name COLLATE DATABASE_DEFAULT) AS datatype_name,
                 typ.name COLLATE DATABASE_DEFAULT AS system_datatype_name,
@@ -313,6 +315,37 @@ SET     max_length = NULL,
                                 ELSE N'Invalid scale.'
                         END
 WHERE   system_datatype_name IN (N'datetime2', N'datetimeoffset', N'time')
+        AND log_code IS NULL;
+
+-- Check indeterministic new_column_name
+WITH cteConfiguration(log_code, log_text, mi, mx)
+AS (
+        SELECT  log_code,
+                log_text,
+                MIN(new_column_name) OVER (PARTITION BY table_id, column_id) AS mi,
+                MAX(new_column_name) OVER (PARTITION BY table_id, column_id) AS mx
+        FROM    #settings
+        WHERE   new_column_name IS NOT NULL
+)
+UPDATE  cteConfiguration
+SET     log_code = N'W',
+        log_text = N'Multiple new_column_name names for same column.'
+WHERE   mi < mx
+        AND log_code IS NULL;
+
+WITH cteConfiguration(log_code, log_text, mi, mx)
+AS (
+        SELECT  log_code,
+                log_text,
+                MIN(column_id) OVER (PARTITION BY table_id, new_column_name) AS mi,
+                MAX(column_id) OVER (PARTITION BY table_id, new_column_name) AS mx
+        FROM    #settings
+        WHERE   new_column_name IS NOT NULL
+)
+UPDATE  cteConfiguration
+SET     log_code = N'W',
+        log_text = N'new_column_name is used for multiple columns for same table.'
+WHERE   mi < mx
         AND log_code IS NULL;
 
 -- Check indeterministic datatype name
