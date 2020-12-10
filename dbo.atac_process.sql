@@ -14,7 +14,6 @@ SET NOCOUNT ON;
 DECLARE @statement_id INT,
         @sql_text NVARCHAR(MAX),
         @entity NVARCHAR(392),
-        @action_code NCHAR(4),
         @current_phase TINYINT = 1,
         @max_phase TINYINT = 5;
 
@@ -23,6 +22,11 @@ IF @maximum_number_of_statements <= 0
         BEGIN
                 RETURN;
         END;
+
+-- Get current max_phase
+SELECT TOP(1)   @max_phase = phase
+FROM            dbo.atac_queue
+ORDER BY        phase DESC;
 
 -- Local helper table
 DECLARE @process TABLE
