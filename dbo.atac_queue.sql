@@ -40,10 +40,10 @@ CREATE TABLE    dbo.atac_queue
                                                                                         OR action_code = N'drcc' AND sort_order =  70   -- Drop computed column
                                                                                         OR action_code = N'undf' AND sort_order =  80   -- Unbind column default
                                                                                         OR action_code = N'unru' AND sort_order =  90   -- Unbind column rule
-                                                                                        OR action_code = N'reco' AND sort_order = 100   -- Rename a column
-                                                                                        OR action_code = N'pref' AND sort_order = 110   -- Any statement request by user to be run before alter column
-                                                                                        OR action_code = N'alco' AND sort_order = 120   -- Alter column
-                                                                                        OR action_code = N'suff' AND sort_order = 130   -- Any statement request by user to be run after alter column
+                                                                                        OR action_code = N'pref' AND sort_order = 100   -- Any statement request by user to be run before alter column
+                                                                                        OR action_code = N'alco' AND sort_order = 110   -- Alter column
+                                                                                        OR action_code = N'suff' AND sort_order = 120   -- Any statement request by user to be run after alter column
+                                                                                        OR action_code = N'reco' AND sort_order = 130   -- Rename a column
                                                                                         OR action_code = N'biru' AND sort_order = 140   -- Bind column rule
                                                                                         OR action_code = N'bidf' AND sort_order = 150   -- Bind column default
                                                                                         OR action_code = N'crcc' AND sort_order = 160   -- Create computed column
