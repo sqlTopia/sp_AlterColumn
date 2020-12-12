@@ -52,8 +52,9 @@ CREATE TABLE    dbo.atac_queue
                                                                                         OR action_code = N'crix' AND sort_order = 190   -- Create index
                                                                                         OR action_code = N'crfk' AND sort_order = 200   -- Create foreign key
                                                                                         OR action_code = N'entg' AND sort_order = 210   -- Enable table triggers
-                                                                                        OR action_code = N'endt' AND sort_order = 220   -- Enable database triggers
-                                                                                )
+                                                                                        OR action_code = N'revw' AND sort_order = 220   -- Refresh views
+                                                                                        OR action_code = N'endt' AND sort_order = 230   -- Enable database triggers
+                                                                                ),
                 );
 GO
 CREATE CLUSTERED INDEX cx_atac_queue ON dbo.atac_queue (phase, entity, statement_id);
