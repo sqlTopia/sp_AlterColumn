@@ -326,7 +326,6 @@ AS (
                 MAX(new_column_name) OVER (PARTITION BY table_id, column_id) AS mx
         FROM    #settings
         WHERE   new_column_name IS NOT NULL
-                AND log_code IS NULL
 )
 UPDATE  cteConfiguration
 SET     log_code = N'E',
@@ -442,6 +441,36 @@ AS (
 UPDATE  cteConfiguration
 SET     log_code = N'E',
         log_text = CONCAT(N'(#', graph_id, N') Multiple xml collection names within same foreign key chain.')
+WHERE   mi < mx;
+
+-- Check indeterministic default_name
+WITH cteConfiguration(log_code, log_text, mi, mx)
+AS (
+        SELECT  log_code,
+                log_text,
+                MIN(default_name) OVER (PARTITION BY table_id, column_id) AS mi,
+                MAX(default_name) OVER (PARTITION BY table_id, column_id) AS mx
+        FROM    #settings
+        WHERE   default_name IS NOT NULL
+)
+UPDATE  cteConfiguration
+SET     log_code = N'E',
+        log_text = N'Configuration has multiple default name on column.'
+WHERE   mi < mx;
+
+-- Check indeterministic rule_name
+WITH cteConfiguration(log_code, log_text, mi, mx)
+AS (
+        SELECT  log_code,
+                log_text,
+                MIN(rule_name) OVER (PARTITION BY table_id, column_id) AS mi,
+                MAX(rule_name) OVER (PARTITION BY table_id, column_id) AS mx
+        FROM    #settings
+        WHERE   rule_name IS NOT NULL
+)
+UPDATE  cteConfiguration
+SET     log_code = N'E',
+        log_text = N'Configuration has multiple rule name on column.'
 WHERE   mi < mx;
 
 -- Update configurations settings
