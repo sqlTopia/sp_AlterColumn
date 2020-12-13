@@ -196,6 +196,22 @@ SET     datatype_name = CASE
         log_text = CONCAT(N'Configuration is changed from ', system_datatype_name, ' to ', datatype_name, '(max).')
 WHERE   system_datatype_name IN (N'image', N'text', N'ntext');
 
+-- Adjust fixed length datatypes
+UPDATE  #settings
+SET     max_length = NULL,
+        precision = NULL,
+        scale = NULL,
+        collation_name =        CASE
+                                        WHEN datatype_name = N'sysname' THEN collation_name
+                                        ELSE NULL
+                                END,
+        xml_collection_name =   CASE
+                                        WHEN system_datatype_name = N'xml' THEN xml_collection_name
+                                        ELSE NULL
+                                END
+WHERE   system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml')
+        OR datatype_name = N'sysname';
+
 -- Validate configurations regarding datatype, collation, xml collection, default and rule are having valid names
 WITH cteInvalid(log_code, log_text, msgtxt)
 AS (
@@ -231,22 +247,6 @@ FROM            #settings AS cfg
 INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
                         AND col.name COLLATE DATABASE_DEFAULT = cfg.new_column_name
 WHERE           cfg.new_column_name > N'';
-
--- Adjust fixed length datatypes
-UPDATE  #settings
-SET     max_length = NULL,
-        precision = NULL,
-        scale = NULL,
-        collation_name =        CASE
-                                        WHEN datatype_name = N'sysname' THEN collation_name
-                                        ELSE NULL
-                                END,
-        xml_collection_name =   CASE
-                                        WHEN system_datatype_name = N'xml' THEN xml_collection_name
-                                        ELSE NULL
-                                END
-WHERE   system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml')
-        OR datatype_name = N'sysname';
 
 -- Adjust and validate datatypes with max_length only
 UPDATE          cfg
@@ -351,8 +351,8 @@ WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
 AS (
         SELECT  log_code,
                 log_text,
-                MIN(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id) AS mi,
-                MAX(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id) AS mx,
+                MIN(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id, tag) AS mi,
+                MAX(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id, tag) AS mx,
                 graph_id
         FROM    #settings
         WHERE   node_count >= 2
@@ -362,6 +362,21 @@ SET     log_code = N'W',
         log_text = CONCAT(N'(#', graph_id, N') Multiple datatype names within same foreign key chain.')
 WHERE   mi < mx
         AND log_code IS NULL;
+
+WITH cteConfiguration(log_code, log_text, mi, mx, graph_id, tag)
+AS (
+        SELECT  log_code,
+                log_text,
+                MIN(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id) AS mi,
+                MAX(COALESCE(datatype_name, N'')) OVER (PARTITION BY graph_id) AS mx,
+                graph_id,
+                tag
+        FROM    #settings
+)
+UPDATE  cteConfiguration
+SET     log_code = N'E',
+        log_text = CONCAT(N'(#', graph_id, N'/', tag, N') Multiple datatype names between configuration tags.')
+WHERE   mi < mx;
 
 -- Check indeterministic max_length
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
