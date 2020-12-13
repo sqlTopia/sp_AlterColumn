@@ -13,6 +13,10 @@ IF NOT EXISTS (SELECT * FROM dbo.atac_configuration)
                 RETURN;
         END;
 
+UPDATE  dbo.atac_configuration
+SET     log_code = NULL,
+        log_text = NULL;
+
 -- Replenish always
 EXEC    dbo.atac_replenish;
 
@@ -73,11 +77,11 @@ INSERT          #settings
                         graph_id,
                         node_count
                 )
-SELECT          sch.name COLLATE DATABASE_DEFAULT AS schema_name,
+SELECT          cfg.schema_name,
                 tbl.object_id AS table_id,
-                tbl.name COLLATE DATABASE_DEFAULT AS table_name,
+                cfg.table_name,
                 col.column_id,
-                col.name COLLATE DATABASE_DEFAULT AS column_name,
+                cfg.column_name,
                 cfg.tag,
                 cfg.new_column_name,
                 usr.is_user_defined,
@@ -151,7 +155,7 @@ WHILE ROWCOUNT_BIG() >= 1
                                         AND cte.graph_id < cfg.graph_id;
         END;
 
--- Calculate node count
+-- Calculate node count (could be duplicated due to tags)
 WITH cteNodeCount(graph_id)
 AS (
         SELECT          graph_id
@@ -188,7 +192,7 @@ SET     datatype_name = CASE
 WHERE   system_datatype_name IN (N'image', N'text', N'ntext');
 
 -- Validate configurations regarding datatype, collation, xml collection, default and rule are having valid names
-WITH cteInvalid(log_code, log_text, information)
+WITH cteInvalid(log_code, log_text, error_information)
 AS (
         SELECT          cfg.log_code,
                         cfg.log_text,
@@ -199,7 +203,7 @@ AS (
                                 WHEN def.name IS NULL AND cfg.default_name > N'' THEN N'Default name is invalid.'               -- Empty space will remove default name
                                 WHEN rul.name IS NULL AND cfg.rule_name > N'' THEN N'Rule name is invalid.'                     -- Empty space will remove rule name
                                 ELSE NULL
-                        END AS information
+                        END AS error_information
         FROM            #settings AS cfg
         LEFT JOIN       sys.types AS typ ON typ.name COLLATE DATABASE_DEFAULT = cfg.datatype_name
         LEFT JOIN       sys.fn_helpcollations() AS hcl ON hcl.name COLLATE DATABASE_DEFAULT = cfg.collation_name
@@ -212,9 +216,16 @@ AS (
 )
 UPDATE  cteInvalid
 SET     log_code = N'E',
-        log_text = information
+        log_text = error_information
 WHERE   log_code IS NULL
-        AND information IS NOT NULL;
+        AND error_information IS NOT NULL;
+
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to missing referenced system object.', 16, 1);
+
+                RETURN  -1000;
+        END;
 
 -- Check if new column name already exists in current table
 UPDATE          cfg
@@ -223,30 +234,32 @@ SET             cfg.log_code = N'E',
 FROM            #settings AS cfg
 INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
                         AND col.name COLLATE DATABASE_DEFAULT = cfg.new_column_name
-WHERE           cfg.new_column_name > N''
-                AND cfg.log_code IS NULL;
+WHERE           cfg.new_column_name > N'';
 
--- Validate fixed length datatypes
-UPDATE          cfg
-SET             cfg.max_length = NULL,
-                cfg.precision = NULL,
-                cfg.scale = NULL,
-                cfg.collation_name =    CASE
-                                                WHEN cfg.datatype_name = N'sysname' THEN cfg.collation_name
-                                                ELSE NULL
-                                        END,
-                cfg.xml_collection_name =       CASE
-                                                        WHEN cfg.system_datatype_name = N'xml' THEN cfg.xml_collection_name
-                                                        ELSE NULL
-                                                END
-FROM            #settings AS cfg
-WHERE           (
-                        cfg.system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml')
-                        OR cfg.datatype_name = N'sysname'
-                )
-                AND cfg.log_code IS NULL;
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to already existing column name.', 16, 1);
 
--- Validate datatypes with max_length only
+                RETURN  -1010;
+        END;
+
+-- Adjust fixed length datatypes
+UPDATE  #settings
+SET     max_length = NULL,
+        precision = NULL,
+        scale = NULL,
+        collation_name =        CASE
+                                        WHEN datatype_name = N'sysname' THEN collation_name
+                                        ELSE NULL
+                                END,
+        xml_collection_name =   CASE
+                                        WHEN system_datatype_name = N'xml' THEN xml_collection_name
+                                        ELSE NULL
+                                END
+WHERE   system_datatype_name IN (N'bigint', N'bit', N'date', N'datetime', N'float', N'geography', N'geometry', N'hierarchyid', N'int', N'money', N'real', N'smalldatetime', N'smallint', N'smallmoney', N'tinyint', N'sql_variant', N'timestamp', N'uniqueidentifier', N'xml')
+        OR datatype_name = N'sysname';
+
+-- Adjust and validate datatypes with max_length only
 UPDATE          cfg
 SET             cfg.max_length =        CASE
                                                 WHEN cfg.is_user_defined = 1 THEN NULL
@@ -277,10 +290,16 @@ CROSS APPLY     (
                                 ELSE N'Invalid max_length.'
                         END 
                 ) AS inf(msg)
-WHERE           cfg.system_datatype_name IN (N'binary', N'char', N'nchar', N'nvarchar', N'varbinary', N'varchar')
-                AND cfg.log_code IS NULL;
+WHERE           cfg.system_datatype_name IN (N'binary', N'char', N'nchar', N'nvarchar', N'varbinary', N'varchar');
 
--- Check datatypes with precision and scale only
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid max_length.', 16, 1);
+
+                RETURN  -1020;
+        END;
+
+-- Adjust and validate datatypes with precision and scale only
 UPDATE  #settings
 SET     max_length = NULL,
         collation_name = NULL,
@@ -295,10 +314,16 @@ SET     max_length = NULL,
                                 WHEN precision IS NULL OR scale IS NULL THEN N'Invalid precision and scale.'
                                 ELSE NULL
                         END
-WHERE   system_datatype_name IN (N'decimal', N'numeric')
-        AND log_code IS NULL;
+WHERE   system_datatype_name IN (N'decimal', N'numeric');
 
--- Validate datatypes with scale only
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid precision and scale.', 16, 1);
+
+                RETURN  -1030;
+        END;
+
+-- Adjust and validate datatypes with scale only
 UPDATE  #settings
 SET     max_length = NULL,
         precision = NULL,
@@ -314,8 +339,14 @@ SET     max_length = NULL,
                                 WHEN scale <= 7 THEN NULL
                                 ELSE N'Invalid scale.'
                         END
-WHERE   system_datatype_name IN (N'datetime2', N'datetimeoffset', N'time')
-        AND log_code IS NULL;
+WHERE   system_datatype_name IN (N'datetime2', N'datetimeoffset', N'time');
+
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid scale.', 16, 1);
+
+                RETURN  -1040;
+        END;
 
 -- Check indeterministic new_column_name
 WITH cteConfiguration(log_code, log_text, mi, mx)
@@ -333,6 +364,13 @@ SET     log_code = N'W',
 WHERE   mi < mx
         AND log_code IS NULL;
 
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to multiple new name for same column.', 16, 1);
+
+                RETURN  -1050;
+        END;
+
 WITH cteConfiguration(log_code, log_text, mi, mx)
 AS (
         SELECT  log_code,
@@ -344,9 +382,16 @@ AS (
 )
 UPDATE  cteConfiguration
 SET     log_code = N'W',
-        log_text = N'new_column_name is used for multiple columns for same table.'
+        log_text = N'Configuration is not valid due to new column name is used for multiple columns in same table.'
 WHERE   mi < mx
         AND log_code IS NULL;
+
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid max_length.', 16, 1);
+
+                RETURN  -1060;
+        END;
 
 -- Check indeterministic datatype name
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
@@ -382,6 +427,13 @@ SET     log_code = N'E',
 WHERE   mi < mx
         AND log_code IS NULL;
 
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid max_length.', 16, 1);
+
+                RETURN  -1070;
+        END;
+
 -- Check indeterministic precision
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
 AS (
@@ -398,6 +450,13 @@ SET     log_code = N'E',
         log_text = CONCAT(N'(#', graph_id, N') Multiple precisions within same foreign key chain.')
 WHERE   mi < mx
         AND log_code IS NULL;
+
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid precision.', 16, 1);
+
+                RETURN  -1080;
+        END;
 
 -- Check indeterministic scale
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
@@ -416,6 +475,13 @@ SET     log_code = N'E',
 WHERE   mi < mx
         AND log_code IS NULL;
 
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid scale.', 16, 1);
+
+                RETURN  -1090;
+        END;
+
 -- Check indeterministic collation name
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
 AS (
@@ -433,6 +499,13 @@ SET     log_code = N'E',
 WHERE   mi < mx
         AND log_code IS NULL;
 
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid collation name.', 16, 1);
+
+                RETURN  -1100;
+        END;
+
 -- Check indeterministic xml collection name
 WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
 AS (
@@ -449,6 +522,13 @@ SET     log_code = N'E',
         log_text = CONCAT(N'(#', graph_id, N') Multiple xml collection names within same foreign key chain.')
 WHERE   mi < mx
         AND log_code IS NULL;
+
+IF EXISTS (SELECT * FROM dbo.atac_configuration WHERE log_code = N'E')
+        BEGIN
+                RAISERROR(N'Configuration is not valid due to invalid xml collection name.', 16, 1);
+
+                RETURN  -1110;
+        END;
 
 -- Update configurations settings
 MERGE   dbo.atac_configuration AS tgt
@@ -471,7 +551,7 @@ WHEN    MATCHED
 WHEN    NOT MATCHED BY SOURCE
         THEN    UPDATE
                 SET     tgt.log_code = N'M',
-                        tgt.log_text = N'Configuration could not be validated.';
+                        tgt.log_text = N'Could not validate configuration due to missing schema name or table name or column name.';
 
 -- Clean up
 DROP TABLE      #settings;
