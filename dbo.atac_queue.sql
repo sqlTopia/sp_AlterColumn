@@ -15,7 +15,6 @@ CREATE TABLE    dbo.atac_queue
                                                                                                                                                                 OR status_code = N'L'   -- Locked (statement is not available at this time)
                                                                                                                                                                 OR status_code = N'R'   -- Ready (statement is ready to be executed)
                                                                                                                                                         ),
-                        tag NVARCHAR(36) NOT NULL,
                         statement_start DATETIME2(3) NULL,
                         statement_end DATETIME2(3) NULL,
                         statement_time AS (DATEADD(MILLISECOND, DATEDIFF(MILLISECOND, statement_start, statement_end), CAST('00:00:00' AS TIME(3)))),
