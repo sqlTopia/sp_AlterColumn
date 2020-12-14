@@ -85,7 +85,7 @@ SELECT          cfg.schema_name,
                 cfg.column_name,
                 cfg.tag,
                 CASE
-                        WHEN cfg.new_column_name = col.name COLLATE DATABASE_DEFAULT THEN NULL
+                        WHEN cfg.new_column_name = cfg.column_name THEN NULL
                         ELSE cfg.new_column_name
                 END AS new_column_name,
                 usr.is_user_defined,
