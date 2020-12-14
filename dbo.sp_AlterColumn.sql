@@ -14,9 +14,6 @@ AS
 SET NOCOUNT ON;
 
 BEGIN TRY
-        -- Validate configurations
-        EXEC    dbo.atac_validate;
-
         -- Populate statement queue
         EXEC    dbo.atac_populate;
 
