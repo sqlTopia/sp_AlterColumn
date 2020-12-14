@@ -46,8 +46,8 @@ CREATE TABLE    #settings
                         collation_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
                         is_nullable NVARCHAR(3) COLLATE DATABASE_DEFAULT NOT NULL,
                         xml_collection_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
-                        default_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
-                        rule_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
+                        datatype_default_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
+                        datatype_rule_name SYSNAME COLLATE DATABASE_DEFAULT NULL,
                         graph_id INT NOT NULL,
                         node_count INT NOT NULL,
                         log_code NCHAR(1) NULL,
@@ -73,8 +73,8 @@ INSERT          #settings
                         collation_name,
                         is_nullable,
                         xml_collection_name,
-                        default_name,
-                        rule_name,
+                        datatype_default_name,
+                        datatype_rule_name,
                         graph_id,
                         node_count
                 )
@@ -111,8 +111,8 @@ SELECT          cfg.schema_name,
                         ELSE COALESCE(cfg.is_nullable, CAST(N'no' AS NVARCHAR(3)))
                 END AS is_nullable,
                 COALESCE(cfg.xml_collection_name, xsc.name COLLATE DATABASE_DEFAULT) AS xml_collection_name,
-                COALESCE(cfg.default_name, def.name COLLATE DATABASE_DEFAULT) AS default_name,
-                COALESCE(cfg.rule_name, rul.name COLLATE DATABASE_DEFAULT) AS rule_name,
+                COALESCE(cfg.datatype_default_name, def.name COLLATE DATABASE_DEFAULT) AS datatype_default_name,
+                COALESCE(cfg.datatype_rule_name, rul.name COLLATE DATABASE_DEFAULT) AS datatype_rule_name,
                 DENSE_RANK() OVER (ORDER BY col.object_id, col.column_id) AS graph_id,
                 1 AS node_count
 FROM            dbo.atac_configuration AS cfg
@@ -125,8 +125,8 @@ INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
 INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
 INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
 LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
-LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
-LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id;
+LEFT JOIN       sys.objects AS def ON def.object_id = usr.default_object_id
+LEFT JOIN       sys.objects AS rul ON rul.object_id = usr.rule_object_id;
 
 -- Loop until no more columns are found with foreign keys
 WHILE ROWCOUNT_BIG() >= 1
@@ -219,19 +219,19 @@ AS (
                         cfg.log_text,
                         CASE
                                 WHEN typ.name IS NULL THEN N'Datatype name is invalid.'
-                                WHEN hcl.name IS NULL AND cfg.collation_name > N'' THEN N'Collation name is invalid.'           -- Empty space will remove collation name
-                                WHEN xml.name IS NULL AND cfg.xml_collection_name > N'' THEN N'XML collection name is invalid.' -- Empty space will remove xml collection name
-                                WHEN def.name IS NULL AND cfg.default_name > N'' THEN N'Default name is invalid.'               -- Empty space will remove default name
-                                WHEN rul.name IS NULL AND cfg.rule_name > N'' THEN N'Rule name is invalid.'                     -- Empty space will remove rule name
+                                WHEN hcl.name IS NULL AND cfg.collation_name > N'' THEN N'Collation name is invalid.'                   -- Empty space will remove collation name
+                                WHEN xml.name IS NULL AND cfg.xml_collection_name > N'' THEN N'XML collection name is invalid.'         -- Empty space will remove xml collection name
+                                WHEN def.name IS NULL AND cfg.datatype_default_name > N'' THEN N'Datatype default name is invalid.'     -- Empty space will remove default name
+                                WHEN rul.name IS NULL AND cfg.datatype_rule_name > N'' THEN N'Datatype rule name is invalid.'           -- Empty space will remove rule name
                                 ELSE NULL
                         END AS msgtxt
         FROM            #settings AS cfg
         LEFT JOIN       sys.types AS typ ON typ.name COLLATE DATABASE_DEFAULT = cfg.datatype_name
         LEFT JOIN       sys.fn_helpcollations() AS hcl ON hcl.name COLLATE DATABASE_DEFAULT = cfg.collation_name
         LEFT JOIN       sys.xml_schema_collections AS xml ON xml.name COLLATE DATABASE_DEFAULT = cfg.xml_collection_name
-        LEFT JOIN       sys.objects AS def ON def.name COLLATE DATABASE_DEFAULT = cfg.default_name
+        LEFT JOIN       sys.objects AS def ON def.name COLLATE DATABASE_DEFAULT = cfg.datatype_default_name
                                 AND def.type COLLATE DATABASE_DEFAULT = 'D'
-        LEFT JOIN       sys.objects AS rul ON rul.name COLLATE DATABASE_DEFAULT = cfg.rule_name
+        LEFT JOIN       sys.objects AS rul ON rul.name COLLATE DATABASE_DEFAULT = cfg.datatype_rule_name
                                 AND rul.type COLLATE DATABASE_DEFAULT = 'R'
 )
 UPDATE  cteInvalid
@@ -447,45 +447,44 @@ WITH cteConfiguration(log_code, log_text, mi, mx, graph_id)
 AS (
         SELECT  log_code,
                 log_text,
-                MIN(COALESCE(xml_collection_name, N'')) OVER (PARTITION BY graph_id) AS mi,
-                MAX(COALESCE(xml_collection_name, N'')) OVER (PARTITION BY graph_id) AS mx,
+                MIN(COALESCE(xml_collection_name, N'')) OVER (PARTITION BY table_id, column_id) AS mi,
+                MAX(COALESCE(xml_collection_name, N'')) OVER (PARTITION BY table_id, column_id) AS mx,
                 graph_id
         FROM    #settings
-        WHERE   node_count >= 2
 )
 UPDATE  cteConfiguration
 SET     log_code = N'E',
-        log_text = CONCAT(N'(#', graph_id, N') Multiple xml collection names within same foreign key chain.')
+        log_text = CONCAT(N'(#', graph_id, N') Multiple xml collection names for same column.')
 WHERE   mi < mx;
 
--- Check indeterministic default_name
+-- Check indeterministic datatype_default_name
 WITH cteConfiguration(log_code, log_text, mi, mx)
 AS (
         SELECT  log_code,
                 log_text,
-                MIN(default_name) OVER (PARTITION BY table_id, column_id) AS mi,
-                MAX(default_name) OVER (PARTITION BY table_id, column_id) AS mx
+                MIN(datatype_default_name) OVER (PARTITION BY table_id, column_id) AS mi,
+                MAX(datatype_default_name) OVER (PARTITION BY table_id, column_id) AS mx
         FROM    #settings
-        WHERE   default_name IS NOT NULL
+        WHERE   datatype_default_name IS NOT NULL
 )
 UPDATE  cteConfiguration
 SET     log_code = N'E',
-        log_text = N'Configuration has multiple default name on column.'
+        log_text = N'Configuration has multiple datatype default name on column.'
 WHERE   mi < mx;
 
--- Check indeterministic rule_name
+-- Check indeterministic datatype_rule_name
 WITH cteConfiguration(log_code, log_text, mi, mx)
 AS (
         SELECT  log_code,
                 log_text,
-                MIN(rule_name) OVER (PARTITION BY table_id, column_id) AS mi,
-                MAX(rule_name) OVER (PARTITION BY table_id, column_id) AS mx
+                MIN(datatype_rule_name) OVER (PARTITION BY table_id, column_id) AS mi,
+                MAX(datatype_rule_name) OVER (PARTITION BY table_id, column_id) AS mx
         FROM    #settings
-        WHERE   rule_name IS NOT NULL
+        WHERE   datatype_rule_name IS NOT NULL
 )
 UPDATE  cteConfiguration
 SET     log_code = N'E',
-        log_text = N'Configuration has multiple rule name on column.'
+        log_text = N'Configuration has multiple datatype rule name on column.'
 WHERE   mi < mx;
 
 -- Update configurations settings
@@ -503,8 +502,8 @@ WHEN    MATCHED
                         tgt.collation_name = src.collation_name,
                         tgt.is_nullable = src.is_nullable,
                         tgt.xml_collection_name = src.xml_collection_name,
-                        tgt.default_name = src.default_name,
-                        tgt.rule_name = src.rule_name,
+                        tgt.datatype_default_name = src.datatype_default_name,
+                        tgt.datatype_rule_name = src.datatype_rule_name,
                         tgt.log_code = src.log_code,
                         tgt.log_text = src.log_text
 WHEN    NOT MATCHED BY SOURCE
