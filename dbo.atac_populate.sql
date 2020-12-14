@@ -105,7 +105,7 @@ INNER JOIN      (
                                         END AS scale,
                                         col.collation_name COLLATE DATABASE_DEFAULT AS collation_name,
                                         CASE
-                                                WHEN col.is_nullable = 1 THEN CAST(N'yes' AS NVARCHAR(3))
+                                                WHEN col.is_nullable = CAST(1 AS BIT) THEN CAST(N'yes' AS NVARCHAR(3))
                                                 ELSE CAST(N'no' AS NVARCHAR(3))
                                         END AS is_nullable,
                                         xsc.name COLLATE DATABASE_DEFAULT AS xml_collection_name,
@@ -159,7 +159,7 @@ IF NOT EXISTS (SELECT * FROM #settings)
         END;
 
 -- Add database trigger statements to the queue
-IF EXISTS (SELECT * FROM sys.triggers WHERE parent_class_desc = N'DATABASE')
+IF EXISTS (SELECT * FROM sys.triggers WHERE parent_class_desc = N'DATABASE' AND is_disabled = CAST(0 AS BIT) AND is_ms_shipped = CAST(0 AS BIT))
         BEGIN
                 INSERT  dbo.atac_queue
                         (
@@ -195,10 +195,13 @@ IF EXISTS (SELECT * FROM sys.triggers WHERE parent_class_desc = N'DATABASE')
 -- Add table trigger statements to the queue
 WITH cteTriggers(schema_name, table_name)
 AS (
-        SELECT DISTINCT schema_name,
-                        table_name
+        SELECT DISTINCT cfg.schema_name,
+                        cfg.table_name
         FROM            #settings AS cfg
         INNER JOIN      sys.triggers AS trg ON trg.parent_id = cfg.table_id
+                                AND trg.parent_class_desc = N'OBJECT_OR_COLUMN'
+                                AND trg.is_disabled = CAST(0 AS BIT)
+                                AND trg.is_ms_shipped = CAST(0 AS BIT)
 )
 INSERT          dbo.atac_queue
                 (
@@ -230,7 +233,7 @@ CROSS APPLY     (
                                         3
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase);
-
+/*
 -- Add foreign key statements to the queue
 WITH cteForeignKeys(parent_schema_name, parent_table_name, child_schema_name, child_table_name, foreign_key_id)
 AS (
@@ -246,7 +249,7 @@ AS (
         INNER JOIN      #settings AS c ON c.table_id = fkc.parent_object_id
                                 AND c.column_id = fkc.parent_column_id
 
-        -- Take care of self-referecing
+        -- Take care of self-referencing
         UNION
 
         -- Child columns
@@ -370,7 +373,7 @@ CROSS APPLY     (
                                         3
                                 )
                 ) AS act(entity, action_code, sql_text, sort_order, phase);
-
+*/
 -- Add index statements to the queue
 CREATE TABLE    #indexes
                 (
@@ -388,19 +391,15 @@ CREATE TABLE    #indexes
                         is_unique BIT NOT NULL DEFAULT (0),  
                         is_primary_key BIT NOT NULL DEFAULT (0), 
                         is_unique_constraint BIT NOT NULL DEFAULT (0),
-                        ignore_dup_key NVARCHAR(32) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
                         data_space_name SYSNAME COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
-                        allow_row_locks NVARCHAR(32) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
-                        allow_page_locks NVARCHAR(32) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
-                        fill_factor NVARCHAR(32) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
-                        is_padded NVARCHAR(32) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
+                        with_definition NVARCHAR(MAX) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT(N''),
                         filter_definition NVARCHAR(MAX) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
                         key_columns NVARCHAR(MAX) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
                         include_columns NVARCHAR(MAX) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
-                        partition_columns NVARCHAR(MAX) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N''),
-                        compression_data NVARCHAR(MAX)  COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N'')
+                        partition_columns NVARCHAR(MAX) COLLATE DATABASE_DEFAULT NOT NULL DEFAULT (N'')
                 );
 
+-- Get all indexes covering columns in configurations
 INSERT          #indexes
                 (
                         schema_name,
@@ -411,37 +410,52 @@ INSERT          #indexes
 SELECT DISTINCT cfg.schema_name,
                 cfg.table_id,
                 cfg.table_name,
-                ic.index_id
+                COALESCE(ic.index_id, ind.index_id) AS index_id
 FROM            #settings AS cfg
 LEFT JOIN       sys.index_columns AS ic ON ic.object_id = cfg.table_id          -- Key column, included column or partition column
                         AND ic.column_id = cfg.column_id
 LEFT JOIN       sys.indexes AS ind ON ind.object_id = cfg.table_id
                         AND ind.has_filter = CAST(1 AS BIT)                     -- Filter definition
 WHERE           ic.object_id IS NOT NULL
-                OR CHARINDEX(ind.filter_definition COLLATE DATABASE_DEFAULT, QUOTENAME(cfg.column_name)) >= 1;
+                OR CHARINDEX(QUOTENAME(cfg.column_name), ind.filter_definition COLLATE DATABASE_DEFAULT) >= 1;
 
-UPDATE          i
-SET             i.index_name = ind.name,
-                i.type_desc = ind.type_desc,
-                i.is_unique = ind.is_unique,
-                i.is_primary_key = ind.is_primary_key,
-                i.is_unique_constraint = ind.is_unique_constraint,
-                i.ignore_dup_key = CONCAT(N'IGNORE_DUP_KEY = ', CASE WHEN ind.ignore_dup_key = 1 THEN N'ON' ELSE N'OFF' END),
-                i.data_space_name = ds.name,
-                i.allow_row_locks = CONCAT(N'ALLOW_ROW_LOCKS = ', CASE WHEN ind.allow_row_locks = 1 THEN N'ON' ELSE N'OFF' END),
-                i.allow_page_locks = CONCAT(N'ALLOW_PAGE_LOCKS = ', CASE WHEN ind.allow_page_locks = 1 THEN N'ON' ELSE N'OFF' END),
-                i.fill_factor = CONCAT(N'FILLFACTOR = ', CASE WHEN ind.fill_factor = 0 THEN COALESCE(CONVERT(NVARCHAR(3), cfg.maximum), N'100') ELSE CAST(ind.fill_factor AS NVARCHAR(3)) END),
-                i.is_padded = CONCAT(N'PAD_INDEX = ', CASE WHEN ind.is_padded = 1 THEN N'ON' ELSE N'OFF' END),
-                i.filter_definition =   CASE
-                                                WHEN ind.filter_definition IS NULL THEN N''
-                                                ELSE N' WHERE ' + ind.filter_definition
+-- Get metadata about indexes
+UPDATE          ind
+SET             ind.index_name = sysind.name,
+                ind.type_desc = sysind.type_desc,
+                ind.is_unique = sysind.is_unique,
+                ind.is_primary_key = sysind.is_primary_key,
+                ind.is_unique_constraint = sysind.is_unique_constraint,
+                ind.data_space_name = ds.name,
+                ind.with_definition = CONCAT(N' WITH (PAD_INDEX = ', CASE WHEN sysind.is_padded = CAST(1 AS BIT) THEN N'ON' ELSE N'OFF' END, N', STATISTICS_NORECOMPUTE = OFF', N', SORT_IN_TEMPDB = ON', N', IGNORE_DUP_KEY = ', CASE WHEN sysind.ignore_dup_key = CAST(1 AS BIT) THEN N'ON' ELSE N'OFF' END, N', ONLINE = OFF', N', ALLOW_ROW_LOCKS = ', CASE WHEN sysind.allow_row_locks = CAST(1 AS BIT) THEN N'ON' ELSE N'OFF' END, N', ALLOW_PAGE_LOCKS = ', CASE WHEN sysind.allow_page_locks = CAST(1 AS BIT) THEN N'ON' ELSE N'OFF' END, N', FILLFACTOR = ', CASE WHEN sysind.fill_factor = 0 THEN CAST(cfg.maximum AS NVARCHAR(3)) ELSE CAST(sysind.fill_factor AS NVARCHAR(3)) END, compression.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), N')'),
+                ind.filter_definition = CASE
+                                                WHEN sysind.filter_definition IS NULL THEN N''
+                                                ELSE N' WHERE ' + sysind.filter_definition
                                         END
-FROM            #indexes AS i
-INNER JOIN      sys.indexes AS ind ON ind.object_id = i.table_id
-                        AND ind.index_id = i.index_id
-INNER JOIN      sys.data_spaces AS ds ON ds.data_space_id = ind.data_space_id
-LEFT JOIN       sys.configurations AS cfg ON cfg.configuration_id = 109;                -- Default Fill factor %
+FROM            #indexes AS ind
+INNER JOIN      sys.indexes AS sysind ON sysind.object_id = ind.table_id
+                        AND sysind.index_id = ind.index_id
+                        AND sysind.is_disabled = CAST(0 AS BIT)
+                        AND sysind.is_hypothetical = CAST(0 AS BIT)
+INNER JOIN      sys.data_spaces AS ds ON ds.data_space_id = sysind.data_space_id
+LEFT JOIN       sys.configurations AS cfg ON cfg.configuration_id = 109                 -- Default Fill factor % from database configuration
+OUTER APPLY     (
+                                SELECT          CONCAT(N', DATA_COMPRESSION = ', par.data_compression_desc COLLATE DATABASE_DEFAULT, N' ON PARTITIONS (', par.partition_number, N')')
+                                FROM            (
+                                                        SELECT  par.data_compression_desc,
+                                                                par.partition_number,
+                                                                MAX(par.partition_number) OVER () AS partition_count
+                                                        FROM    sys.partitions AS par
+                                                        WHERE   par.object_id = ind.table_id
+                                                                AND par.index_id = ind.index_id
+                                                ) AS par
+                                WHERE           par.partition_count >= 2
+                                ORDER BY        par.partition_number
+                                FOR XML         PATH(N''),
+                                                TYPE
+                ) AS compression(content);
 
+-- Get key columns in correct order using wanted name
 UPDATE          ind
 SET             ind.key_columns = CONCAT(N' (', STUFF(keys.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), 1, 2, N''), N')')
 FROM            #indexes AS ind
@@ -460,6 +474,7 @@ CROSS APPLY     (
                                         TYPE
                 ) AS keys(content);
 
+-- Get included columns in correct order using wanted name
 UPDATE          ind
 SET             ind.include_columns =   CASE
                                                 WHEN included.content IS NULL THEN N''
@@ -481,6 +496,7 @@ CROSS APPLY     (
                                                 TYPE
                 ) AS included(content);
 
+-- Get partitioning columns in correct order using wanted name (there can be only one partitioning column, but just in case...)
 UPDATE          ind
 SET             ind.partition_columns = CASE
                                                 WHEN partitions.content IS NULL THEN N''
@@ -502,28 +518,6 @@ CROSS APPLY     (
                                                 TYPE
                 ) AS partitions(content);
 
-UPDATE          ind
-SET             ind.compression_data =  CASE
-                                                WHEN compression.content IS NULL THEN N''
-                                                ELSE STUFF(compression.content.value(N'(.)[1]', N'NVARCHAR(MAX)'), 1, 2, N'')
-                                        END
-FROM            #indexes AS ind
-CROSS APPLY     (
-                                SELECT          CONCAT(N', DATA_COMPRESSION = ', par.data_compression_desc COLLATE DATABASE_DEFAULT, N' ON PARTITIONS (', par.partition_number, N')')
-                                FROM            (
-                                                        SELECT  par.data_compression_desc,
-                                                                par.partition_number,
-                                                                MAX(par.partition_number) OVER () AS partition_count
-                                                        FROM    sys.partitions AS par
-                                                        WHERE   par.object_id = ind.table_id
-                                                                AND par.index_id = ind.index_id
-                                                ) AS par
-                                WHERE           par.partition_count >= 2
-                                ORDER BY        par.partition_number
-                                FOR XML         PATH(N''),
-                                                TYPE
-                ) AS compression(content);
-
 INSERT          dbo.atac_queue
                 (
                         entity,
@@ -533,7 +527,7 @@ INSERT          dbo.atac_queue
                         sort_order,
                         phase
                 )
-SELECT          CONCAT(ind.schema_name, N'.', ind.table_name) AS entity,
+SELECT          CONCAT(QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name)) AS entity,
                 act.action_code,
                 N'L' AS status_code, 
                 act.sql_text,
@@ -553,24 +547,20 @@ CROSS APPLY     (
                                 (
                                         N'crix',
                                         CASE
-                                                WHEN ind.is_primary_key = 1 THEN CONCAT(N'ALTER TABLE ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), N' ADD CONSTRAINT ', QUOTENAME(ind.index_name), N' PRIMARY KEY ', ind.type_desc)
-                                                WHEN ind.is_unique_constraint = 1 THEN CONCAT(N'ALTER TABLE ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), N' ADD CONSTRAINT ', QUOTENAME(ind.index_name), N' UNIQUE ', ind.type_desc)
-                                                ELSE CONCAT(N'CREATE', CASE WHEN ind.is_unique = 1 THEN N' UNIQUE' ELSE N'' END, ind.type_desc, N' INDEX ', QUOTENAME(ind.index_name), N' ON ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name))
-                                        END 
-                                        + ind.key_columns
-                                        + ind.include_columns
-                                        + ind.filter_definition
-                                        + CONCAT(N' WITH (', ind.is_padded, N', STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = ON, ', ind.ignore_dup_key, N', ONLINE = OFF, ', ind.allow_row_locks, N', ', ind.allow_page_locks, N', ', ind.fill_factor, ind.compression_data, N') ON ', QUOTENAME(ind.data_space_name))
-                                        + ind.partition_columns
-                                        + N';',
+                                                WHEN ind.type_desc = N'CLUSTERED COLUMNSTORE' THEN CONCAT(N'CREATE ', ind.type_desc, N' INDEX ', QUOTENAME(ind.index_name), N' ON ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), N' WITH (ONLINE = OFF) ON ', QUOTENAME(ind.data_space_name), ind.partition_columns, N';')
+                                                WHEN ind.type_desc = N'NONCLUSTERED COLUMNSTORE' THEN CONCAT(N'CREATE ', ind.type_desc, N' INDEX ', QUOTENAME(ind.index_name), N' ON ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), N' (', ind.key_columns, N')', ind.filter_definition, N' WITH (ONLINE = OFF) ON ', QUOTENAME(ind.data_space_name), ind.partition_columns, N';')
+                                                WHEN ind.is_primary_key = 1 THEN CONCAT(N'ALTER TABLE ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), N' ADD CONSTRAINT ', QUOTENAME(ind.index_name), N' PRIMARY KEY ', ind.type_desc, ind.key_columns, ind.include_columns, ind.filter_definition, ind.with_definition, ind.partition_columns, N';')
+                                                WHEN ind.is_unique_constraint = 1 THEN CONCAT(N'ALTER TABLE ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), N' ADD CONSTRAINT ', QUOTENAME(ind.index_name), N' UNIQUE ', ind.type_desc, ind.key_columns, ind.include_columns, ind.filter_definition, ind.with_definition, ind.partition_columns, N';')
+                                                ELSE CONCAT(N'CREATE ', CASE WHEN ind.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END, ind.type_desc, N' INDEX ', QUOTENAME(ind.index_name), N' ON ', QUOTENAME(ind.schema_name), N'.', QUOTENAME(ind.table_name), ind.key_columns, ind.include_columns, ind.filter_definition, ind.with_definition, ind.partition_columns, N';')
+                                        END,
                                         190,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase)
 ORDER BY        CASE
-                        WHEN act.action_code = N'drix' AND ind.type_desc = N'CLUSTERED' THEN 1  -- Drop clustered last
+                        WHEN act.action_code = N'drix' AND ind.type_desc IN (N'CLUSTERED', N'CLUSTERED COLUMNSTORE') THEN 1  -- Drop clustered last
                         WHEN act.action_code = N'drix' THEN 0
-                        WHEN act.action_code = N'crix' AND ind.type_desc = N'CLUSTERED' THEN 0  -- Create clustered first
+                        WHEN act.action_code = N'crix' AND ind.type_desc IN (N'CLUSTERED', N'CLUSTERED COLUMNSTORE') THEN 0  -- Create clustered first
                         ELSE 1
                 END;
 
@@ -588,7 +578,7 @@ AS (
                         END AS check_definition
         FROM            #settings AS cfg
         INNER JOIN      sys.check_constraints AS cc ON cc.parent_object_id = cfg.table_id
-        WHERE           cfg.column_id = cc.parent_column_id 
+        WHERE           cfg.column_id = cc.parent_column_id
                         OR CHARINDEX(QUOTENAME(cfg.column_name), cc.definition COLLATE DATABASE_DEFAULT) >= 1
 )
 INSERT          dbo.atac_queue
@@ -666,10 +656,11 @@ CROSS APPLY     (
                 ) AS act(action_code, sql_text, sort_order, phase);
 
 -- Add computed column statements to the queue
-WITH cteComputedColumns(schema_name, table_name, computed_column_name, computed_column_definition, persist_definition)
+WITH cteComputedColumns(schema_name, table_name, column_id, computed_column_name, computed_column_definition, persist_definition)
 AS (
         SELECT DISTINCT cfg.schema_name,
                         cfg.table_name,
+                        cc.column_id,
                         cc.name COLLATE DATABASE_DEFAULT AS computed_column_name,
                         CASE
                                 WHEN cfg.new_column_name IS NULL THEN cc.definition COLLATE DATABASE_DEFAULT
@@ -681,7 +672,7 @@ AS (
                         END AS persist_definition
         FROM            #settings AS cfg
         INNER JOIN      sys.computed_columns AS cc ON cc.object_id = cfg.table_id
-        WHERE           cfg.column_id = cc.column_id 
+        WHERE           cfg.column_id = cc.column_id
                         OR CHARINDEX(QUOTENAME(cfg.column_name), cc.definition COLLATE DATABASE_DEFAULT) >= 1
 )
 INSERT          dbo.atac_queue
@@ -713,7 +704,10 @@ CROSS APPLY     (
                                         160,
                                         2
                                 )
-                ) AS act(action_code, sql_text, sort_order, phase);
+                ) AS act(action_code, sql_text, sort_order, phase)
+ORDER BY        cte.schema_name,
+                cte.table_name,
+                cte.column_id;
 
 -- Add datatype default statements to the queue
 WITH cteDefaults(schema_name, table_name, column_name, new_column_name, datatype_default_name, old_default_name)
@@ -752,7 +746,7 @@ CROSS APPLY     (
                         VALUES  (
                                         N'undf',
                                         CASE
-                                                WHEN cte.old_default_name > N'' THEN CONCAT(N'EXEC sp_unbinddefault @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(cte.column_name), N'''', N''''''), N''';') 
+                                                WHEN cte.old_default_name > N'' THEN CONCAT(N'EXEC sys.sp_unbinddefault @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(cte.column_name), N'''', N''''''), N''';') 
                                                 ELSE NULL
                                         END,
                                         80,
@@ -761,7 +755,7 @@ CROSS APPLY     (
                                 (
                                         N'bidf',
                                         CASE 
-                                                WHEN cte.datatype_default_name > N'' THEN CONCAT(N'EXEC sp_binddefault @rulename = N', QUOTENAME(cte.datatype_default_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(COALESCE(cte.new_column_name, cte.column_name)), N'''', N''''''), N''';')
+                                                WHEN cte.datatype_default_name > N'' THEN CONCAT(N'EXEC sys.sp_binddefault @rulename = N', QUOTENAME(cte.datatype_default_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(COALESCE(cte.new_column_name, cte.column_name)), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
                                         150,
@@ -783,7 +777,7 @@ AS (
         INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
                                 AND col.column_id = cfg.column_id
         INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
-        LEFT JOIN       sys.objects AS rul ON rul.object_id = usr.default_object_id
+        LEFT JOIN       sys.objects AS rul ON rul.object_id = usr.rule_object_id
         WHERE           cfg.datatype_rule_name <> rul.name COLLATE DATABASE_DEFAULT
                         OR cfg.datatype_rule_name > N'' AND rul.name IS NULL
 )
@@ -807,7 +801,7 @@ CROSS APPLY     (
                         VALUES  (
                                         N'unru',
                                         CASE
-                                                WHEN cte.old_rule_name > N'' THEN CONCAT(N'EXEC sp_unbindrule @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(cte.column_name), N'''', N''''''), N''';') 
+                                                WHEN cte.old_rule_name > N'' THEN CONCAT(N'EXEC sys.sp_unbindrule @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(cte.column_name), N'''', N''''''), N''';') 
                                                 ELSE NULL
                                         END,
                                         90,
@@ -816,10 +810,10 @@ CROSS APPLY     (
                                 (
                                         N'biru',
                                         CASE 
-                                                WHEN cte.datatype_rule_name > N'' THEN CONCAT(N'EXEC sp_bindrule @rulename = N', QUOTENAME(cte.datatype_rule_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(COALESCE(cte.new_column_name, cte.column_name)), N'''', N''''''), N''';')
+                                                WHEN cte.datatype_rule_name > N'' THEN CONCAT(N'EXEC sys.sp_bindrule @rulename = N', QUOTENAME(cte.datatype_rule_name, N''''), N', @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(COALESCE(cte.new_column_name, cte.column_name)), N'''', N''''''), N''';')
                                                 ELSE NULL
                                         END,
-                                        10,
+                                        140,
                                         2
                                 )
                 ) AS act(action_code, sql_text, sort_order, phase)
@@ -831,7 +825,7 @@ AS (
         SELECT DISTINCT schema_name,
                         table_name,
                         column_name,
-                        QUOTENAME(datatype_name) AS datatype_name,
+                        datatype_name,
                         CASE
                                 WHEN max_length IS NULL THEN N''
                                 ELSE CONCAT(N'(', max_length, N')')
@@ -874,7 +868,7 @@ FROM            cteAlterColumn AS cte
 CROSS APPLY     (
                         VALUES  (
                                         N'alco',
-                                        CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' ALTER COLUMN ', QUOTENAME(cte.column_name), QUOTENAME(cte.datatype_name), cte.max_length, cte.precision_and_scale, cte.collation_name, QUOTENAME(cte.xml_collection_name), cte.is_nullable, N';'),
+                                        CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' ALTER COLUMN ', QUOTENAME(cte.column_name), N' ', QUOTENAME(cte.datatype_name), cte.max_length, cte.precision_and_scale, cte.collation_name, cte.xml_collection_name, cte.is_nullable, N';'),
                                         110,
                                         2
                                 )
@@ -909,7 +903,7 @@ FROM            cteColumns AS cte
 CROSS APPLY     (
                         VALUES  (
                                         N'reco',
-                                        CONCAT(N'EXEC sp_rename @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(cte.column_name), N'''', N''''''), N''', @newname = N', QUOTENAME(cte.new_column_name, N''''), N', @objtype = N''COLUMN'';'),
+                                        CONCAT(N'EXEC sys.sp_rename @objname = N''', REPLACE(QUOTENAME(cte.schema_name) + N'.' + QUOTENAME(cte.table_name) + N'.' + QUOTENAME(cte.column_name), N'''', N''''''), N''', @newname = N', QUOTENAME(cte.new_column_name, N''''), N', @objtype = N''COLUMN'';'),
                                         130,
                                         2
                                 )
@@ -981,7 +975,7 @@ WHERE   rnk >= 2;
 WITH cteSort(statement_id, rnk)
 AS (
         SELECT  statement_id,
-                ROW_NUMBER() OVER (ORDER BY sort_order, entity) AS rnk
+                ROW_NUMBER() OVER (ORDER BY sort_order, entity, queue_id) AS rnk
         FROM    dbo.atac_queue
 )
 UPDATE  cteSort
