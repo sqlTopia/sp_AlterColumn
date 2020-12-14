@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_replenish', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_replenish AS');
 GO
-ALTER PROCEDURE [dbo].[atac_replenish]
+ALTER PROCEDURE dbo.atac_replenish
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -87,7 +87,7 @@ WHILE ROWCOUNT_BIG() >= 1
         END;
 
 -- Replish configurations
-WITH cteMetadata(schema_name, table_name, column_name, tag, datatype_name, max_length, precision, scale, collation_name, is_nullable, xml_collection_name, default_name, rule_name, log_code, log_text)
+WITH cteMetadata(schema_name, table_name, column_name, tag, datatype_name, max_length, precision, scale, collation_name, is_nullable, xml_collection_name, datatype_default_name, datatype_rule_name, log_code, log_text)
 AS (
         SELECT          sch.name COLLATE DATABASE_DEFAULT AS schema_name,
                         tbl.name COLLATE DATABASE_DEFAULT AS table_name,
@@ -114,8 +114,8 @@ AS (
                                 ELSE CAST(N'no' AS NVARCHAR(3))
                         END AS is_nullable,
                         xsc.name COLLATE DATABASE_DEFAULT AS xml_collection_name,
-                        def.name COLLATE DATABASE_DEFAULT AS default_name,
-                        rul.name COLLATE DATABASE_DEFAULT AS rule_name,
+                        def.name COLLATE DATABASE_DEFAULT AS datatype_default_name,
+                        rul.name COLLATE DATABASE_DEFAULT AS datatype_rule_name,
                         N'W' AS log_code,
                         N'Configuration was automatically replenished.' AS log_text
         FROM            #graphs AS grp
@@ -125,8 +125,8 @@ AS (
         INNER JOIN      sys.schemas AS sch ON sch.schema_id = tbl.schema_id
         INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
         LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
-        LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
-        LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id
+        LEFT JOIN       sys.objects AS def ON def.object_id = usr.default_object_id
+        LEFT JOIN       sys.objects AS rul ON rul.object_id = usr.rule_object_id
 )
 MERGE   dbo.atac_configuration AS tgt
 USING   cteMetadata AS src ON src.schema_name = tgt.schema_name
@@ -146,8 +146,8 @@ WHEN    NOT MATCHED BY TARGET
                                 collation_name,
                                 is_nullable,
                                 xml_collection_name,
-                                default_name,
-                                rule_name,
+                                datatype_default_name,
+                                datatype_rule_name,
                                 log_code,
                                 log_text
                         )
@@ -163,8 +163,8 @@ WHEN    NOT MATCHED BY TARGET
                                 src.collation_name,
                                 src.is_nullable,
                                 src.xml_collection_name,
-                                src.default_name,
-                                src.rule_name,
+                                src.datatype_default_name,
+                                src.datatype_rule_name,
                                 src.log_code,
                                 src.log_text
                         );
