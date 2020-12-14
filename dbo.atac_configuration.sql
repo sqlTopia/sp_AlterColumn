@@ -81,3 +81,4 @@ CREATE TABLE    dbo.atac_configuration
                                                                                 OR log_code IS NOT NULL AND log_text > N''
                                                                         )
                 );
+GO
