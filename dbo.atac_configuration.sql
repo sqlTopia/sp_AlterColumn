@@ -54,16 +54,16 @@ CREATE TABLE    dbo.atac_configuration
                                                                                                                                 OR xml_collection_name = N''    -- Remove current setting
                                                                                                                                 OR xml_collection_name > N''    -- Set new xml collection name
                                                                                                                         ),
-                        default_name SYSNAME NULL CONSTRAINT ck_atac_configuration_default_name CHECK   (
-                                                                                                                   default_name IS NULL -- Inherit current setting
-                                                                                                                OR default_name = N''   -- Remove current setting
-                                                                                                                OR default_name > N''   -- Set new default name
-                                                                                                        ),
-                        rule_name SYSNAME NULL CONSTRAINT ck_atac_configuration_rule_name CHECK (
-                                                                                                           rule_name IS NULL    -- Inherit current setting
-                                                                                                        OR rule_name = N''      -- Remove current setting
-                                                                                                        OR rule_name > N''      -- Set new rule name
-                                                                                                ),
+                        datatype_default_name SYSNAME NULL CONSTRAINT ck_atac_configuration_default_name CHECK  (
+                                                                                                                           datatype_default_name IS NULL        -- Inherit current setting
+                                                                                                                        OR datatype_default_name = N''          -- Remove current setting
+                                                                                                                        OR datatype_default_name > N''          -- Set new default name
+                                                                                                                ),
+                        datatype_rule_name SYSNAME NULL CONSTRAINT ck_atac_configuration_rule_name CHECK        (
+                                                                                                                           datatype_rule_name IS NULL   -- Inherit current setting
+                                                                                                                        OR datatype_rule_name = N''     -- Remove current setting
+                                                                                                                        OR datatype_rule_name > N''     -- Set new rule name
+                                                                                                                ),
                         log_code NCHAR(1) NULL CONSTRAINT ck_atac_configuration_log_code CHECK  (
                                                                                                         log_code IS NULL
                                                                                                         OR log_code = N'M'      -- Missing
