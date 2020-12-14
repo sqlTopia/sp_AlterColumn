@@ -15,7 +15,7 @@ DECLARE @statement_id INT,
         @sql_text NVARCHAR(MAX),
         @entity NVARCHAR(392),
         @current_phase TINYINT = 1,
-        @max_phase TINYINT = 5;
+        @max_phase TINYINT;
 
 -- Validate user supplied input parameters
 IF @maximum_number_of_statements <= 0
@@ -37,7 +37,7 @@ DECLARE @process TABLE
         );
 
 -- Keep iterating as long as there are statements to be executed
-WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R'))
+WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L', N'R'))
         BEGIN
                 -- Get next statement ordered by phase and statement_id
                 WHILE @current_phase <= @max_phase
@@ -107,9 +107,7 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                                 END TRY
                                                 BEGIN CATCH
                                                         UPDATE  dbo.atac_queue
-                                                        SET     status_code = N'L',
-                                                                session_id = NULL,
-                                                                statement_start = NULL,
+                                                        SET     status_code = N'E',
                                                                 log_text = CONCAT(N'(', ERROR_NUMBER(), N') ', ERROR_MESSAGE())
                                                         WHERE   statement_id = @statement_id;
 
@@ -118,7 +116,7 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                         END;
 
                                 -- Check if available statements at current phase
-                                IF EXISTS (SELECT * FROM dbo.atac_queue WHERE phase = @current_phase AND status_code IN (N'W', N'L', N'R'))
+                                IF EXISTS (SELECT * FROM dbo.atac_queue WHERE phase = @current_phase AND status_code IN (N'E', N'W', N'L', N'R'))
                                         BEGIN
                                                 -- Unlock next statement for specific entity
                                                 WITH ctePhase
@@ -127,12 +125,12 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                                         FROM            dbo.atac_queue
                                                         WHERE           phase = @current_phase
                                                                         AND entity = @entity
-                                                                        AND status_code IN (N'W', N'L', N'R')
+                                                                        AND status_code IN (N'E', N'W', N'L', N'R')
                                                         ORDER BY        statement_id
                                                 )
                                                 UPDATE  ctePhase
                                                 SET     status_code = N'R'
-                                                WHERE   status_code IN (N'L', N'R');
+                                                WHERE   status_code IN (N'E', N'L', N'R');
                                         END;
                                 ELSE
                                         BEGIN
@@ -151,12 +149,12 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                                                 ROW_NUMBER() OVER (PARTITION BY entity ORDER BY statement_id) AS rnk
                                                         FROM    dbo.atac_queue WITH (TABLOCK)
                                                         WHERE   phase = @current_phase
-                                                                AND status_code IN (N'W', N'L', N'R')
+                                                                AND status_code IN (N'E', N'W', N'L', N'R')
                                                 )
                                                 UPDATE  ctePhase
                                                 SET     status_code = N'R'
                                                 WHERE   rnk = 1
-                                                        AND status_code IN (N'L', N'R');
+                                                        AND status_code IN (N'E', N'L', N'R');
                                         END;
                         END;
         END;
