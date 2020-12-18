@@ -29,24 +29,25 @@ CREATE TABLE    dbo.atac_queue
                                                                         OR statement_start <= statement_end
                                                                 ),
                         CONSTRAINT ck_atac_queue_action_code_sort_order_phase CHECK     (
-                                                                                                   action_code = N'didt' AND sort_order =  10 AND phase = 1     -- Disable database triggers
-                                                                                                OR action_code = N'ditg' AND sort_order =  20 AND phase = 2     -- Disable table triggers
-                                                                                                OR action_code = N'drfk' AND sort_order =  30 AND phase = 2     -- Drop foreign key
-                                                                                                OR action_code = N'drix' AND sort_order =  40 AND phase = 2     -- Drop index
-                                                                                                OR action_code = N'drck' AND sort_order =  50 AND phase = 2     -- Drop table check constraint
-                                                                                                OR action_code = N'drdk' AND sort_order =  60 AND phase = 2     -- Drop table default constraint
-                                                                                                OR action_code = N'drcc' AND sort_order =  70 AND phase = 2     -- Drop computed column
-                                                                                                OR action_code = N'undf' AND sort_order =  80 AND phase = 2     -- Unbind column default
-                                                                                                OR action_code = N'unru' AND sort_order =  90 AND phase = 2     -- Unbind column rule
-                                                                                                OR action_code = N'prfx' AND sort_order = 100 AND phase = 2     -- Any statement request by user to be run before alter column
-                                                                                                OR action_code = N'alco' AND sort_order = 110 AND phase = 2     -- Alter column
-                                                                                                OR action_code = N'sffx' AND sort_order = 120 AND phase = 2     -- Any statement request by user to be run after alter column
-                                                                                                OR action_code = N'reco' AND sort_order = 130 AND phase = 2     -- Rename a column
-                                                                                                OR action_code = N'biru' AND sort_order = 140 AND phase = 2     -- Bind column rule
-                                                                                                OR action_code = N'bidf' AND sort_order = 150 AND phase = 2     -- Bind column default
-                                                                                                OR action_code = N'crcc' AND sort_order = 160 AND phase = 2     -- Create computed column
-                                                                                                OR action_code = N'crdk' AND sort_order = 170 AND phase = 2     -- Create table default constraint
-                                                                                                OR action_code = N'crck' AND sort_order = 180 AND phase = 2     -- Create table check constraint
+                                                                                                   action_code = N'didt' AND sort_order =   0 AND phase = 1     -- Disable database triggers
+                                                                                                OR action_code = N'ditg' AND sort_order =  10 AND phase = 2     -- Disable table triggers
+                                                                                                OR action_code = N'drfk' AND sort_order =  20 AND phase = 2     -- Drop foreign key
+                                                                                                OR action_code = N'drix' AND sort_order =  30 AND phase = 2     -- Drop index
+                                                                                                OR action_code = N'drck' AND sort_order =  40 AND phase = 2     -- Drop table check constraint
+                                                                                                OR action_code = N'drdk' AND sort_order =  50 AND phase = 2     -- Drop table default constraint
+                                                                                                OR action_code = N'drcc' AND sort_order =  60 AND phase = 2     -- Drop computed column
+                                                                                                OR action_code = N'undf' AND sort_order =  70 AND phase = 2     -- Unbind column default
+                                                                                                OR action_code = N'unru' AND sort_order =  80 AND phase = 2     -- Unbind column rule
+                                                                                                OR action_code = N'prfx' AND sort_order =  90 AND phase = 2     -- Any statement request by user to be run before alter column
+                                                                                                OR action_code = N'alco' AND sort_order = 100 AND phase = 2     -- Alter column
+                                                                                                OR action_code = N'sffx' AND sort_order = 110 AND phase = 2     -- Any statement request by user to be run after alter column
+                                                                                                OR action_code = N'reco' AND sort_order = 120 AND phase = 2     -- Rename a column
+                                                                                                OR action_code = N'biru' AND sort_order = 130 AND phase = 2     -- Bind column rule
+                                                                                                OR action_code = N'bidf' AND sort_order = 140 AND phase = 2     -- Bind column default
+                                                                                                OR action_code = N'crcc' AND sort_order = 150 AND phase = 2     -- Create computed column
+                                                                                                OR action_code = N'crdk' AND sort_order = 160 AND phase = 2     -- Create table default constraint
+                                                                                                OR action_code = N'crck' AND sort_order = 170 AND phase = 2     -- Create table check constraint
+                                                                                                OR action_code = N'dick' AND sort_order = 180 AND phase = 2     -- Disable table check constraint
                                                                                                 OR action_code = N'crix' AND sort_order = 190 AND phase = 2     -- Create index
                                                                                                 OR action_code = N'diix' AND sort_order = 200 AND phase = 2     -- Disable index
                                                                                                 OR action_code = N'crfk' AND sort_order = 210 AND phase = 3     -- Create foreign key
