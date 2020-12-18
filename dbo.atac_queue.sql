@@ -7,24 +7,24 @@ CREATE TABLE    dbo.atac_queue
                         action_code NCHAR(4) NOT NULL,
                         session_id SMALLINT NULL,
                         status_code NCHAR(1) NOT NULL CONSTRAINT ck_atac_queue_status_code CHECK        (
-                                                                                                                   status_code = N'E'   -- Error in configuration (column not found or column is in table type)
-                                                                                                                OR status_code = N'F'   -- Finished (statement is executed ok)
-                                                                                                                OR status_code = N'W'   -- Working (statement is being executed)
-                                                                                                                OR status_code = N'L'   -- Locked (statement is not available at this time)
-                                                                                                                OR status_code = N'R'   -- Ready (statement is ready to be executed)
+                                                                                                                   status_code = N'E'   -- Error
+                                                                                                                OR status_code = N'F'   -- Finished
+                                                                                                                OR status_code = N'W'   -- Working
+                                                                                                                OR status_code = N'L'   -- Locked
+                                                                                                                OR status_code = N'R'   -- Ready
                                                                                                         ),
                         statement_start DATETIME2(3) NULL,
                         statement_end DATETIME2(3) NULL,
-                        statement_time AS (DATEADD(MILLISECOND, DATEDIFF(MILLISECOND, statement_start, statement_end), CAST('00:00:00' AS TIME(3)))),
+                        statement_time AS (DATEADD(MILLISECOND, DATEDIFF(MILLISECOND, statement_start, COALESCE(statement_end, SYSDATETIME())), CAST('00:00:00' AS TIME(3)))),
                         log_text NVARCHAR(MAX) NULL CONSTRAINT ck_atac_queue_log_text CHECK (log_text IS NULL OR log_text > N''),
-                        queue_id INT IDENTITY(1, 1) NOT NULL,
+                        queue_id INT IDENTITY(1, 1) NOT NULL CONSTRAINT pk_atac_queue PRIMARY KEY NONCLUSTERED,
                         sort_order TINYINT NOT NULL,
                         entity NVARCHAR(392) NOT NULL,
                         phase TINYINT NOT NULL,
                         sql_text NVARCHAR(MAX) NOT NULL CONSTRAINT ck_atac_queue_sql_text CHECK (sql_text > N''),
                         INDEX cx_atac_queue CLUSTERED (phase, entity, statement_id),
                         CONSTRAINT ck_atac_queue_time CHECK     (
-                                                                        statement_start IS NULL AND statement_end IS NULL
+                                                                           statement_start IS NULL AND statement_end IS NULL
                                                                         OR statement_start IS NOT NULL AND statement_end IS NULL
                                                                         OR statement_start <= statement_end
                                                                 ),
@@ -38,9 +38,9 @@ CREATE TABLE    dbo.atac_queue
                                                                                                 OR action_code = N'drcc' AND sort_order =  70 AND phase = 2     -- Drop computed column
                                                                                                 OR action_code = N'undf' AND sort_order =  80 AND phase = 2     -- Unbind column default
                                                                                                 OR action_code = N'unru' AND sort_order =  90 AND phase = 2     -- Unbind column rule
-                                                                                                OR action_code = N'pref' AND sort_order = 100 AND phase = 2     -- Any statement request by user to be run before alter column
+                                                                                                OR action_code = N'prfx' AND sort_order = 100 AND phase = 2     -- Any statement request by user to be run before alter column
                                                                                                 OR action_code = N'alco' AND sort_order = 110 AND phase = 2     -- Alter column
-                                                                                                OR action_code = N'suff' AND sort_order = 120 AND phase = 2     -- Any statement request by user to be run after alter column
+                                                                                                OR action_code = N'sffx' AND sort_order = 120 AND phase = 2     -- Any statement request by user to be run after alter column
                                                                                                 OR action_code = N'reco' AND sort_order = 130 AND phase = 2     -- Rename a column
                                                                                                 OR action_code = N'biru' AND sort_order = 140 AND phase = 2     -- Bind column rule
                                                                                                 OR action_code = N'bidf' AND sort_order = 150 AND phase = 2     -- Bind column default
