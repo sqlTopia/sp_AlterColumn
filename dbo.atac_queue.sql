@@ -48,10 +48,12 @@ CREATE TABLE    dbo.atac_queue
                                                                                                 OR action_code = N'crdk' AND sort_order = 170 AND phase = 2     -- Create table default constraint
                                                                                                 OR action_code = N'crck' AND sort_order = 180 AND phase = 2     -- Create table check constraint
                                                                                                 OR action_code = N'crix' AND sort_order = 190 AND phase = 2     -- Create index
-                                                                                                OR action_code = N'crfk' AND sort_order = 200 AND phase = 3     -- Create foreign key
-                                                                                                OR action_code = N'entg' AND sort_order = 210 AND phase = 3     -- Enable table triggers
-                                                                                                OR action_code = N'remo' AND sort_order = 220 AND phase = 3     -- Refresh modules
-                                                                                                OR action_code = N'endt' AND sort_order = 230 AND phase = 4     -- Enable database triggers
+                                                                                                OR action_code = N'diix' AND sort_order = 200 AND phase = 2     -- Disable index
+                                                                                                OR action_code = N'crfk' AND sort_order = 210 AND phase = 3     -- Create foreign key
+                                                                                                OR action_code = N'difk' AND sort_order = 220 AND phase = 3     -- Disable foreign key
+                                                                                                OR action_code = N'entg' AND sort_order = 230 AND phase = 3     -- Enable table triggers
+                                                                                                OR action_code = N'remo' AND sort_order = 240 AND phase = 3     -- Refresh modules
+                                                                                                OR action_code = N'endt' AND sort_order = 250 AND phase = 4     -- Enable database triggers
                                                                                         ),
                 );
 GO
