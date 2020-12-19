@@ -375,7 +375,7 @@ AS (
 )
 UPDATE  cteConfiguration
 SET     log_code = N'E',
-        log_text = CONCAT(N'(#', graph_id, N'/', tag, N') Multiple datatype names between configuration tags.')
+        log_text = CONCAT(N'(#', graph_id, CASE WHEN tag > N'' THEN N'/' + tag ELSE N'' END, N') Multiple datatype names between configuration tags.')
 WHERE   mi < mx;
 
 -- Check indeterministic max_length
