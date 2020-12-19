@@ -57,4 +57,3 @@ CREATE TABLE    dbo.atac_queue
                                                                                                 OR action_code = N'endt' AND sort_order = 250 AND phase = 4     -- Enable database triggers
                                                                                         ),
                 );
-GO
