@@ -111,6 +111,8 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L
                                                                 log_text = CONCAT(N'(', ERROR_NUMBER(), N') ', ERROR_MESSAGE())
                                                         WHERE   statement_id = @statement_id;
 
+                                                        RAISERROR(N'Statement #%d failed!', 10, 1, @statement_id) WITH NOWAIT;
+
                                                         BREAK;
                                                 END CATCH;
                                         END;
