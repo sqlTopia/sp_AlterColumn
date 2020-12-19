@@ -171,4 +171,3 @@ WHEN    NOT MATCHED BY TARGET
 
 -- Clean up
 DROP TABLE      #graphs;
-GO
