@@ -10,4 +10,3 @@ SET NOCOUNT ON;
 -- Clean up
 TRUNCATE TABLE  dbo.atac_queue;
 TRUNCATE TABLE  dbo.atac_configuration;
-GO
