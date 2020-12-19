@@ -6,7 +6,7 @@ ALTER PROCEDURE dbo.sp_AlterColumn
         @verbose BIT = 1,
         @tag NVARCHAR(36) = NULL,
         @number_of_executions INT = 0,
-        @waitfor TIME(3) = '00:00:02.000'
+        @waitfor TIME(3) = '00:00:00.250'
 )
 AS
 
