@@ -4,7 +4,6 @@ GO
 ALTER PROCEDURE dbo.sp_AlterColumn
 (
         @verbose BIT = 1,
-        @tag NVARCHAR(36) = NULL,
         @number_of_executions INT = 0,
         @waitfor TIME(3) = '00:00:00.250'
 )
@@ -25,8 +24,6 @@ BEGIN TRY
                                         tag,
                                         sql_text
                         FROM            dbo.atac_queue
-                        WHERE           tag = @tag AND @tag IS NOT NULL
-                                        OR @tag IS NULL
                         ORDER BY        statement_id;
 
                         RETURN;
