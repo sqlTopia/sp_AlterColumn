@@ -29,7 +29,7 @@ BEGIN TRY
                 END;
 
         -- Process statements
-        EXEC    dbo.atac_process        @number_of_executions = @number_of_executions,
+        EXEC    dbo.atac_process        @maximum_number_of_statements = @number_of_executions,
                                         @waitfor = @waitfor;
 END TRY
 BEGIN CATCH
