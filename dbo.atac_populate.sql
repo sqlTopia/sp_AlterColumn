@@ -2,6 +2,9 @@ IF OBJECT_ID(N'dbo.atac_populate', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.atac_populate AS');
 GO
 ALTER PROCEDURE dbo.atac_populate
+(
+        @include_refreshmodules BIT = 1
+)
 AS
 
 -- Prevent unwanted resultsets back to client
@@ -467,45 +470,48 @@ WHERE   new_column_name > N''
 OPTION  (RECOMPILE);
 
 -- remo = Refresh modules
-RAISERROR(N'Adding module refresh statements to atac_queue...', 10, 1) WITH NOWAIT;
+IF @include_refreshmodules = 1
+        BEGIN
+                RAISERROR(N'Adding module refresh statements to atac_queue...', 10, 1) WITH NOWAIT;
 
-WITH cteModules(schema_name, module_name)
-AS (
-        SELECT          s.name COLLATE DATABASE_DEFAULT AS schema_name,
-                        p.name COLLATE DATABASE_DEFAULT AS module_name
-        FROM            @settings AS cfg
-        INNER JOIN      sys.sql_expression_dependencies AS sed ON sed.referenced_id = cfg.table_id
-                                AND sed.referencing_class_desc = N'OBJECT_OR_COLUMN'
-        INNER JOIN      sys.procedures AS p ON p.object_id = sed.referencing_id
-        INNER JOIN      sys.schemas AS s ON s.schema_id = p.schema_id
+                WITH cteModules(schema_name, module_name)
+                AS (
+                        SELECT          s.name COLLATE DATABASE_DEFAULT AS schema_name,
+                                        p.name COLLATE DATABASE_DEFAULT AS module_name
+                        FROM            @settings AS cfg
+                        INNER JOIN      sys.sql_expression_dependencies AS sed ON sed.referenced_id = cfg.table_id
+                                                AND sed.referencing_class_desc = N'OBJECT_OR_COLUMN'
+                        INNER JOIN      sys.procedures AS p ON p.object_id = sed.referencing_id
+                        INNER JOIN      sys.schemas AS s ON s.schema_id = p.schema_id
 
-        UNION
+                        UNION
 
-        SELECT          s.name COLLATE DATABASE_DEFAULT AS schema_name,
-                        v.name COLLATE DATABASE_DEFAULT AS module_name
-        FROM            @settings AS cfg
-        INNER JOIN      sys.sql_expression_dependencies AS sed ON sed.referenced_id = cfg.table_id
-                                AND sed.referencing_class_desc = N'OBJECT_OR_COLUMN'
-        INNER JOIN      sys.views AS v ON v.object_id = sed.referencing_id
-        INNER JOIN      sys.schemas AS s ON s.schema_id = v.schema_id
-)
-INSERT          dbo.atac_queue
-                (
-                        entity,
-                        action_code,
-                        status_code,
-                        sql_text,
-                        sort_order,
-                        phase
+                        SELECT          s.name COLLATE DATABASE_DEFAULT AS schema_name,
+                                        v.name COLLATE DATABASE_DEFAULT AS module_name
+                        FROM            @settings AS cfg
+                        INNER JOIN      sys.sql_expression_dependencies AS sed ON sed.referenced_id = cfg.table_id
+                                                AND sed.referencing_class_desc = N'OBJECT_OR_COLUMN'
+                        INNER JOIN      sys.views AS v ON v.object_id = sed.referencing_id
+                        INNER JOIN      sys.schemas AS s ON s.schema_id = v.schema_id
                 )
-SELECT DISTINCT CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(module_name)) AS entity,
-                N'remo' AS action_code,
-                N'L' AS status_code,
-                CONCAT(N'EXEC sys.sp_refreshsqlmodule @name = N''', REPLACE(QUOTENAME(schema_name) + N'.' + QUOTENAME(module_name), N'''', N''''''), N''';') AS sql_text,
-                240 AS sort_order,
-                5 AS phase
-FROM            cteModules
-OPTION          (RECOMPILE);
+                INSERT          dbo.atac_queue
+                                (
+                                        entity,
+                                        action_code,
+                                        status_code,
+                                        sql_text,
+                                        sort_order,
+                                        phase
+                                )
+                SELECT DISTINCT CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(module_name)) AS entity,
+                                N'remo' AS action_code,
+                                N'L' AS status_code,
+                                CONCAT(N'EXEC sys.sp_refreshsqlmodule @name = N''', REPLACE(QUOTENAME(schema_name) + N'.' + QUOTENAME(module_name), N'''', N''''''), N''';') AS sql_text,
+                                240 AS sort_order,
+                                5 AS phase
+                FROM            cteModules
+                OPTION          (RECOMPILE);
+        END;
 
 -- Sort statements in correct processing order
 WITH cteSort(statement_id, rnk)
@@ -516,15 +522,4 @@ AS (
 )
 UPDATE  cteSort
 SET     statement_id = rnk;
-
--- Release first statements in first phase
-WITH cteReady(status_code, rnk)
-AS (
-        SELECT  status_code, 
-                ROW_NUMBER() OVER (PARTITION BY entity ORDER BY phase, statement_id) AS rn
-        FROM    dbo.atac_queue
-)
-UPDATE  cteReady
-SET     status_code = N'R'
-WHERE   rnk = 1;
 GO
