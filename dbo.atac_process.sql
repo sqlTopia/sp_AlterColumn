@@ -3,7 +3,8 @@ IF OBJECT_ID(N'dbo.atac_process', 'P') IS NULL
 GO
 ALTER PROCEDURE dbo.atac_process
 (
-        @maximum_number_of_statements INT = NULL
+        @maximum_number_of_statements INT = NULL,
+        @waitfor TIME(3) = '00:00:00.250'
 )
 AS
 
@@ -85,7 +86,8 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L
                                                 -- Execute statement
                                                 BEGIN TRY
                                                         -- Excute current statement
-                                                        EXEC    dbo.sqltopia_retry      @sql_text = @sql_text;
+                                                        EXEC    dbo.sqltopia_retry      @sql_text = @sql_text,
+                                                                                        @waitfor = @waitfor;
 
                                                         -- Update processed and end time
                                                         UPDATE  dbo.atac_queue WITH (TABLOCK)
