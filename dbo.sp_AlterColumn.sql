@@ -21,7 +21,6 @@ BEGIN TRY
                 BEGIN
                         SELECT          action_code,
                                         status_code,
-                                        tag,
                                         sql_text
                         FROM            dbo.atac_queue
                         ORDER BY        statement_id;
