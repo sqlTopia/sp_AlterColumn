@@ -327,7 +327,7 @@ SELECT          CONCAT(QUOTENAME(dfc.schema_name), N'.', QUOTENAME(dfc.table_nam
                 END AS sort_order,
                 3 AS phase
 FROM            @settings AS cfg
-CROSS APPLY     dbo.sqltopia_check_constraints(cfg.schema_name, cfg.table_name, cfg.column_name, cfg.new_column_name) AS dfc
+CROSS APPLY     dbo.sqltopia_default_constraints(cfg.schema_name, cfg.table_name, cfg.column_name, cfg.new_column_name) AS dfc
 WHERE           dfc.action_code IN (N'crdk', N'drdk')
                 AND dfc.sql_text > N''
 OPTION          (RECOMPILE);
