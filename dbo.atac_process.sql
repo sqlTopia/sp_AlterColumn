@@ -84,8 +84,8 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L
 
                                                 -- Execute statement
                                                 BEGIN TRY
-                                                        -- Excute currenct statement
-                                                        EXEC    (@sql_text);
+                                                        -- Excute current statement
+                                                        EXEC    dbo.sqltopia_retry      @sql_text = @sql_text;
 
                                                         -- Update processed and end time
                                                         UPDATE  dbo.atac_queue WITH (TABLOCK)
@@ -106,12 +106,24 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L
                                                                 END;
                                                 END TRY
                                                 BEGIN CATCH
-                                                        UPDATE  dbo.atac_queue
-                                                        SET     status_code = N'E',
-                                                                log_text = CONCAT(N'(', ERROR_NUMBER(), N') ', ERROR_MESSAGE())
-                                                        WHERE   statement_id = @statement_id;
-
-                                                        RAISERROR(N'Statement #%d failed!', 10, 1, @statement_id) WITH NOWAIT;
+                                                        IF ERROR_NUMBER() IN (1204, 1205, 1222)
+                                                                BEGIN
+                                                                        RAISERROR(N'Statement #%d failed!', 10, 1, @statement_id) WITH NOWAIT;
+                                                                        
+                                                                        UPDATE  dbo.atac_queue
+                                                                        SET     status_code = N'E',
+                                                                                log_text = CONCAT(N'(', ERROR_NUMBER(), N') ', ERROR_MESSAGE())
+                                                                        WHERE   statement_id = @statement_id;
+                                                                END;
+                                                        ELSE
+                                                                BEGIN
+                                                                        SELECT  @statement_id = ERROR_NUMBER(),
+                                                                                @sql_text = ERROR_MESSAGE();
+                                                                                
+                                                                        RAISERROR(N'Unrecoverable error %d (%s).', 18, 1, @statement_id, @sql_text) WITH NOWAIT;
+                                                                        
+                                                                        RETURN  -1000;
+                                                                END;
 
                                                         BREAK;
                                                 END CATCH;
