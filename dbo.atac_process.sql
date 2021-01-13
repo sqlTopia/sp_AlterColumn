@@ -106,7 +106,7 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L
                                                                 END;
                                                 END TRY
                                                 BEGIN CATCH
-                                                        IF ERROR_NUMBER() IN (1204, 1205, 1222)
+                                                        IF ERROR_NUMBER() IN (1203, 1204, 1205, 1222)
                                                                 BEGIN
                                                                         RAISERROR(N'Statement #%d failed!', 10, 1, @statement_id) WITH NOWAIT;
                                                                         
