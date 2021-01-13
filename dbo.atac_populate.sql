@@ -151,7 +151,7 @@ INSERT  dbo.atac_queue
                 sort_order,
                 phase
         )
-SELECT  N'DATABASE' AS entity,
+SELECT  N'' AS entity,
         trg.action_code,
         N'L' AS status_code,
         trg.sql_text,
