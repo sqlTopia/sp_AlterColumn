@@ -3,6 +3,7 @@ IF OBJECT_ID(N'dbo.sp_AlterColumn', 'P') IS NULL
 GO
 ALTER PROCEDURE dbo.sp_AlterColumn
 (
+        @include_refreshmodules BIT = 1,
         @verbose BIT = 1,
         @number_of_executions INT = 0,
         @waitfor TIME(3) = '00:00:00.250'
@@ -14,7 +15,7 @@ SET NOCOUNT ON;
 
 BEGIN TRY
         -- Populate statement queue
-        EXEC    dbo.atac_populate;
+        EXEC    dbo.atac_populate       @include_refreshmodules = @include_refreshmodules;
 
         -- If viewing statements only
         IF @verbose = 1
