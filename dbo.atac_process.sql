@@ -139,7 +139,7 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'E', N'W', N'L
                                                 AS (
                                                         SELECT TOP(1)   status_code
                                                         FROM            dbo.atac_queue
-                                                        WHERE           phase = @current_phase
+                                                        WHERE           phase >= @current_phase
                                                                         AND entity = @entity
                                                                         AND status_code IN (N'E', N'W', N'L', N'R')
                                                         ORDER BY        statement_id
