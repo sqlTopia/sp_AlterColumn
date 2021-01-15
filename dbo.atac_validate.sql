@@ -54,7 +54,7 @@ CREATE TABLE    #settings
                         log_text NVARCHAR(MAX) NULL
                 );
 
--- Get valid configuration settings
+-- Get current configuration settings
 INSERT          #settings
                 (
                         schema_name,
@@ -63,7 +63,6 @@ INSERT          #settings
                         column_id,
                         column_name,
                         tag,
-                        new_column_name,
                         is_user_defined,
                         datatype_name,
                         system_datatype_name,
@@ -84,35 +83,34 @@ SELECT          cfg.schema_name,
                 col.column_id,
                 cfg.column_name,
                 cfg.tag,
-                CASE
-                        WHEN cfg.new_column_name = cfg.column_name THEN NULL
-                        ELSE cfg.new_column_name
-                END AS new_column_name,
                 usr.is_user_defined,
-                COALESCE(cfg.datatype_name, usr.name COLLATE DATABASE_DEFAULT) AS datatype_name,
+                usr.name COLLATE DATABASE_DEFAULT AS datatype_name,
                 typ.name COLLATE DATABASE_DEFAULT AS system_datatype_name,
                 CASE
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN COALESCE(cfg.max_length, CAST(N'MAX' AS NVARCHAR(4)))
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN COALESCE(cfg.max_length, CAST(col.max_length AS NVARCHAR(4)))
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN COALESCE(cfg.max_length, CAST(col.max_length / 2 AS NVARCHAR(4)))
-                        ELSE cfg.max_length
+                        WHEN usr.is_user_defined = 1 THEN NULL
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN N'MAX'
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN col.max_length
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN col.max_length / 2
+                        ELSE NULL
                 END AS max_length,
                 CASE 
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN COALESCE(cfg.precision, col.precision)
-                        ELSE cfg.precision
+                        WHEN usr.is_user_defined = 1 THEN NULL
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN col.precision
+                        ELSE NULL
                 END AS precision,
                 CASE 
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN COALESCE(cfg.scale, col.scale)
-                        ELSE cfg.scale
+                        WHEN usr.is_user_defined = 1 THEN NULL
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
+                        ELSE NULL
                 END AS scale,
-                COALESCE(cfg.collation_name, col.collation_name COLLATE DATABASE_DEFAULT) AS collation_name,
+                col.collation_name AS collation_name,
                 CASE
-                        WHEN col.is_nullable = 1 THEN COALESCE(cfg.is_nullable, CAST(N'yes' AS NVARCHAR(3)))
-                        ELSE COALESCE(cfg.is_nullable, CAST(N'no' AS NVARCHAR(3)))
+                        WHEN col.is_nullable = 1 THEN N'yes'
+                        ELSE N'no'
                 END AS is_nullable,
-                COALESCE(cfg.xml_collection_name, xsc.name COLLATE DATABASE_DEFAULT) AS xml_collection_name,
-                COALESCE(cfg.datatype_default_name, def.name COLLATE DATABASE_DEFAULT) AS datatype_default_name,
-                COALESCE(cfg.datatype_rule_name, rul.name COLLATE DATABASE_DEFAULT) AS datatype_rule_name,
+                xsc.name COLLATE DATABASE_DEFAULT AS xml_collection_name,
+                def.name COLLATE DATABASE_DEFAULT AS datatype_default_name,
+                rul.name COLLATE DATABASE_DEFAULT AS datatype_rule_name,
                 DENSE_RANK() OVER (ORDER BY col.object_id, col.column_id) AS graph_id,
                 1 AS node_count
 FROM            dbo.atac_configuration AS cfg
@@ -125,8 +123,48 @@ INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
 INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
 INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
 LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
-LEFT JOIN       sys.objects AS def ON def.object_id = usr.default_object_id
-LEFT JOIN       sys.objects AS rul ON rul.object_id = usr.rule_object_id;
+LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
+LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id;
+
+-- Get wanted configuration settings
+UPDATE          tgt
+SET             tgt.new_column_name = NULLIF(cfg.new_column_name, cfg.column_name),
+                tgt.is_user_defined = COALESCE(usr.is_user_defined, tgt.is_user_defined),
+                tgt.datatype_name = COALESCE(usr.name COLLATE DATABASE_DEFAULT, tgt.datatype_name),
+                tgt.system_datatype_name = COALESCE(typ.name COLLATE DATABASE_DEFAULT, tgt.system_datatype_name),
+                tgt.max_length =        CASE
+                                                WHEN usr.is_user_defined = 1 THEN NULL
+                                                ELSE cfg.max_length
+                                        END,
+                tgt.precision = CASE 
+                                        WHEN usr.is_user_defined = 1 THEN NULL
+                                        ELSE cfg.precision
+                                END,
+                tgt.scale =     CASE 
+                                        WHEN usr.is_user_defined = 1 THEN NULL
+                                        ELSE cfg.scale
+                                END,
+                tgt.collation_name =    CASE
+                                                WHEN usr.is_user_defined = 1 THEN COALESCE(cfg.collation_name, usr.collation_name COLLATE DATABASE_DEFAULT, N'DATABASE_DEFAULT')
+                                                ELSE COALESCE(cfg.collation_name, tgt.collation_name COLLATE DATABASE_DEFAULT, N'DATABASE_DEFAULT')
+                                        END,
+                tgt.is_nullable = COALESCE(cfg.is_nullable, tgt.is_nullable),
+                tgt.xml_collection_name = COALESCE(cfg.xml_collection_name, tgt.xml_collection_name),
+                tgt.datatype_default_name = COALESCE(cfg.datatype_default_name, tgt.datatype_default_name),
+                tgt.datatype_rule_name = COALESCE(cfg.datatype_rule_name, tgt.datatype_rule_name)
+FROM            #settings AS tgt
+INNER JOIN      dbo.atac_configuration AS cfg ON cfg.schema_name = tgt.schema_name
+                        AND cfg.table_name = tgt.table_name
+                        AND cfg.column_name = tgt.column_name
+                        AND cfg.tag = tgt.tag
+INNER JOIN      sys.columns AS col ON col.object_id = tgt.table_id
+                        AND col.column_id = tgt.column_id
+LEFT JOIN       sys.types AS usr ON usr.name COLLATE DATABASE_DEFAULT = cfg.datatype_name
+LEFT JOIN       sys.types AS typ ON typ.user_type_id = usr.system_type_id
+
+UPDATE  #settings
+SET     collation_name = N'DATABASE_DEFAULT'
+WHERE   collation_name = CAST(DATABASEPROPERTYEX(DB_NAME(), N'Collation') AS SYSNAME);
 
 -- Loop until no more columns are found with foreign keys
 WHILE ROWCOUNT_BIG() >= 1
@@ -188,9 +226,18 @@ SET     datatype_name = CASE
                                 WHEN system_datatype_name = N'ntext' THEN N'nvarchar'
                                 ELSE N'varchar'
                         END,
+        system_datatype_name =  CASE
+                                        WHEN system_datatype_name = N'image' THEN N'varbinary'
+                                        WHEN system_datatype_name = N'ntext' THEN N'nvarchar'
+                                        ELSE N'varchar'
+                                END,
         max_length = N'MAX',
         precision = NULL,
         scale = NULL,
+        collation_name =        CASE
+                                        WHEN system_datatype_name = N'image' THEN NULL
+                                        ELSE collation_name
+                                END,
         xml_collection_name = NULL,
         log_code = N'W',
         log_text = CONCAT(N'Configuration is changed from ', system_datatype_name, ' to ', datatype_name, '(max).')
@@ -285,6 +332,14 @@ WHERE           cfg.system_datatype_name IN (N'binary', N'char', N'nchar', N'nva
 -- Adjust and validate datatypes with precision and scale only
 UPDATE  #settings
 SET     max_length = NULL,
+        precision =     CASE
+                                WHEN is_user_defined = 1 THEN NULL
+                                ELSE precision
+                        END,
+        scale = CASE
+                        WHEN is_user_defined = 1 THEN NULL
+                        ELSE scale
+                END,
         collation_name = NULL,
         xml_collection_name = NULL,
         log_code =      CASE
@@ -303,6 +358,10 @@ WHERE   system_datatype_name IN (N'decimal', N'numeric');
 UPDATE  #settings
 SET     max_length = NULL,
         precision = NULL,
+        scale = CASE
+                        WHEN is_user_defined = 1 THEN NULL
+                        ELSE scale
+                END,
         collation_name = NULL,
         xml_collection_name = NULL,
         log_code =      CASE
