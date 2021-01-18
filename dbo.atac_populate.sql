@@ -335,6 +335,33 @@ WHERE           dfc.action_code IN (N'crdk', N'drdk')
                 AND dfc.sql_text > N''
 OPTION          (RECOMPILE);
 
+-- drcc = Drop Computed Columns
+-- crcc = Create Computed Columns
+RAISERROR(N'Adding computed column statements to atac_queue...', 10, 1) WITH NOWAIT;
+
+INSERT          dbo.atac_queue
+                (
+                        entity,
+                        action_code,
+                        status_code,
+                        sql_text,
+                        sort_order,
+                        phase
+                )
+SELECT          CONCAT(QUOTENAME(def.schema_name), N'.', QUOTENAME(def.table_name)) AS entity,
+                def.action_code,
+                N'L' AS status_code,
+                def.sql_text,
+                CASE
+                        WHEN def.action_code = N'crcc' THEN 150
+                        ELSE 60
+                END AS sort_order,
+                3 AS phase
+FROM            @settings AS cfg
+CROSS APPLY     dbo.sqltopia_computed_columns(cfg.schema_name, cfg.table_name, cfg.column_name, cfg.new_column_name) AS def
+WHERE           def.sql_text > N''
+OPTION          (RECOMPILE);
+
 -- undf = Unbind column default
 -- bidf = Bind column default
 RAISERROR(N'Adding datatype column default statements to atac_queue...', 10, 1) WITH NOWAIT;
