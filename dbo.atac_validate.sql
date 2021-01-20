@@ -266,7 +266,7 @@ AS (
                         cfg.log_text,
                         CASE
                                 WHEN typ.name IS NULL THEN N'Datatype name is invalid.'
-                                WHEN hcl.name IS NULL AND cfg.collation_name > N'' THEN N'Collation name is invalid.'                   -- Empty space will remove collation name
+                                WHEN hcl.name IS NULL AND cfg.collation_name <> N'DATABASE_DEFAULT' THEN N'Collation name is invalid.'  -- Empty space will remove collation name
                                 WHEN xml.name IS NULL AND cfg.xml_collection_name > N'' THEN N'XML collection name is invalid.'         -- Empty space will remove xml collection name
                                 WHEN def.name IS NULL AND cfg.datatype_default_name > N'' THEN N'Datatype default name is invalid.'     -- Empty space will remove default name
                                 WHEN rul.name IS NULL AND cfg.datatype_rule_name > N'' THEN N'Datatype rule name is invalid.'           -- Empty space will remove rule name
