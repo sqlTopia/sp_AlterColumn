@@ -99,7 +99,7 @@ SELECT          cfg.schema_name,
                         ELSE NULL
                 END AS precision,
                 CASE 
-                        WHEN usr.is_user_defined = 1 THEN N'DATABASE_DEFAULT'
+                        WHEN usr.is_user_defined = 1 THEN NULL
                         WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
                         ELSE NULL
                 END AS scale,
