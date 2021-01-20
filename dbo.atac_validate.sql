@@ -145,7 +145,7 @@ SET             tgt.new_column_name = NULLIF(cfg.new_column_name, cfg.column_nam
                                         ELSE cfg.scale
                                 END,
                 tgt.collation_name =    CASE
-                                                WHEN usr.is_user_defined = 1 THEN COALESCE(cfg.collation_name, usr.collation_name COLLATE DATABASE_DEFAULT)
+                                                WHEN usr.is_user_defined = 1 THEN NULL
                                                 ELSE COALESCE(cfg.collation_name, tgt.collation_name COLLATE DATABASE_DEFAULT)
                                         END,
                 tgt.is_nullable = COALESCE(cfg.is_nullable, tgt.is_nullable),
