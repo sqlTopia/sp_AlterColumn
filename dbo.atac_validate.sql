@@ -145,8 +145,8 @@ SET             tgt.new_column_name = NULLIF(cfg.new_column_name, cfg.column_nam
                                         ELSE cfg.scale
                                 END,
                 tgt.collation_name =    CASE
-                                                WHEN usr.is_user_defined = 1 THEN COALESCE(cfg.collation_name, usr.collation_name COLLATE DATABASE_DEFAULT, N'DATABASE_DEFAULT')
-                                                ELSE COALESCE(cfg.collation_name, tgt.collation_name COLLATE DATABASE_DEFAULT, N'DATABASE_DEFAULT')
+                                                WHEN usr.is_user_defined = 1 THEN COALESCE(cfg.collation_name, usr.collation_name COLLATE DATABASE_DEFAULT)
+                                                ELSE COALESCE(cfg.collation_name, tgt.collation_name COLLATE DATABASE_DEFAULT)
                                         END,
                 tgt.is_nullable = COALESCE(cfg.is_nullable, tgt.is_nullable),
                 tgt.xml_collection_name = COALESCE(cfg.xml_collection_name, tgt.xml_collection_name),
@@ -163,8 +163,8 @@ LEFT JOIN       sys.types AS usr ON usr.name COLLATE DATABASE_DEFAULT = cfg.data
 LEFT JOIN       sys.types AS typ ON typ.user_type_id = usr.system_type_id
 
 UPDATE  #settings
-SET     collation_name = N'DATABASE_DEFAULT'
-WHERE   collation_name = CAST(DATABASEPROPERTYEX(DB_NAME(), N'Collation') AS SYSNAME);
+SET     collation_name = CAST(DATABASEPROPERTYEX(DB_NAME(), N'Collation') AS SYSNAME)
+WHERE   collation_name = N'DATABASE_DEFAULT';
 
 -- Loop until no more columns are found with foreign keys
 WHILE ROWCOUNT_BIG() >= 1
@@ -266,7 +266,7 @@ AS (
                         cfg.log_text,
                         CASE
                                 WHEN typ.name IS NULL THEN N'Datatype name is invalid.'
-                                WHEN hcl.name IS NULL AND cfg.collation_name <> N'DATABASE_DEFAULT' THEN N'Collation name is invalid.'  -- Empty space will remove collation name
+                                WHEN hcl.name IS NULL AND cfg.collation_name > N'' THEN N'Collation name is invalid.'                   -- Empty space will remove collation name
                                 WHEN xml.name IS NULL AND cfg.xml_collection_name > N'' THEN N'XML collection name is invalid.'         -- Empty space will remove xml collection name
                                 WHEN def.name IS NULL AND cfg.datatype_default_name > N'' THEN N'Datatype default name is invalid.'     -- Empty space will remove default name
                                 WHEN rul.name IS NULL AND cfg.datatype_rule_name > N'' THEN N'Datatype rule name is invalid.'           -- Empty space will remove rule name
