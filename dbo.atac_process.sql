@@ -132,7 +132,7 @@ WHILE EXISTS (SELECT * FROM dbo.atac_queue WHERE status_code IN (N'W', N'L', N'R
                                         END;
 
                                 -- Check if available statements at current phase
-                                IF EXISTS (SELECT * FROM dbo.atac_queue WHERE phase = @current_phase AND status_code IN (N'L', N'R'))
+                                IF EXISTS (SELECT * FROM dbo.atac_queue WHERE phase = @current_phase AND status_code IN (N'W', N'L', N'R'))
                                         BEGIN
                                                 -- Unlock next statement for specific entity
                                                 WITH ctePhase
