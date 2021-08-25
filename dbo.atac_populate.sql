@@ -287,10 +287,10 @@ INSERT          dbo.atac_queue
                         sort_order,
                         phase
                 )
-SELECT DISTINCT CONCAT(QUOTENAME(vw.schema_name), N'.', QUOTENAME(vw.view_name)) AS entity,
+SELECT          CONCAT(QUOTENAME(vw.schema_name), N'.', QUOTENAME(vw.view_name)) AS entity,
                 vw.action_code,
                 N'L' AS status_code,
-                vw.sql_text,
+                MAX(vw.sql_text) AS sql_text,
                 CASE
                         WHEN vw.action_code = N'crvw' THEN 185
                         ELSE 35
@@ -299,6 +299,9 @@ SELECT DISTINCT CONCAT(QUOTENAME(vw.schema_name), N'.', QUOTENAME(vw.view_name))
 FROM            @settings AS cfg
 CROSS APPLY     dbo.sqltopia_views(cfg.schema_name, cfg.table_name, cfg.column_name) AS vw
 WHERE           vw.action_code IN (N'crvw', N'drvw')
+GROUP BY        CONCAT(QUOTENAME(vw.schema_name), N'.', QUOTENAME(vw.view_name)),
+                vw.action_code,
+                vw.dependency_level
 ORDER BY        CASE
                         WHEN vw.action_code = N'crvw' THEN vw.dependency_level
                         ELSE -vw.dependency_level
