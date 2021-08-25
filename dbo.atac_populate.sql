@@ -299,6 +299,10 @@ SELECT DISTINCT CONCAT(QUOTENAME(vw.schema_name), N'.', QUOTENAME(vw.view_name))
 FROM            @settings AS cfg
 CROSS APPLY     dbo.sqltopia_views(cfg.schema_name, cfg.table_name, cfg.column_name) AS vw
 WHERE           vw.action_code IN (N'crvw', N'drvw')
+ORDER BY        CASE
+                        WHEN vw.action_code = N'crvw' THEN vw.dependency_level
+                        ELSE -vw.dependency_level
+                END
 OPTION          (RECOMPILE);
 
 -- crck = Create table check constraint
