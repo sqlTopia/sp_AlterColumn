@@ -274,6 +274,33 @@ WHERE           (
                 AND ind.sql_text > N''
 OPTION          (RECOMPILE);
 
+-- crvw = Create view
+-- drvw = Drop view
+RAISERROR(N'Adding view statements to atac_queue...', 10, 1) WITH NOWAIT;
+
+INSERT          dbo.atac_queue
+                (
+                        entity,
+                        action_code,
+                        status_code,
+                        sql_text,
+                        sort_order,
+                        phase
+                )
+SELECT DISTINCT CONCAT(QUOTENAME(vw.schema_name), N'.', QUOTENAME(vw.view_name)) AS entity,
+                vw.action_code,
+                N'L' AS status_code,
+                vw.sql_text,
+                CASE
+                        WHEN vw.action_code = N'crvw' THEN 185
+                        ELSE 35
+                END AS sort_order,
+                3 AS phase
+FROM            @settings AS cfg
+CROSS APPLY     dbo.sqltopia_views(cfg.schema_name, cfg.table_name, cfg.column_name) AS vw
+WHERE           vw.action_code IN (N'crvw', N'drvw')
+OPTION          (RECOMPILE);
+
 -- crck = Create table check constraint
 -- drck = Drop table check constraint
 -- dick = Disable table check constraint
