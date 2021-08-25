@@ -33,6 +33,7 @@ CREATE TABLE    dbo.atac_queue
                                                                                                 OR action_code = N'drfk' AND sort_order =  10 AND phase = 2     -- Drop foreign key
                                                                                                 OR action_code = N'ditg' AND sort_order =  20 AND phase = 3     -- Disable table triggers
                                                                                                 OR action_code = N'drix' AND sort_order =  30 AND phase = 3     -- Drop index
+                                                                                                OR action_code = N'drvw' AND sort_order =  35 AND phase = 3     -- Drop view
                                                                                                 OR action_code = N'drck' AND sort_order =  40 AND phase = 3     -- Drop table check constraint
                                                                                                 OR action_code = N'drdk' AND sort_order =  50 AND phase = 3     -- Drop table default constraint
                                                                                                 OR action_code = N'drcc' AND sort_order =  60 AND phase = 3     -- Drop computed column
@@ -48,6 +49,7 @@ CREATE TABLE    dbo.atac_queue
                                                                                                 OR action_code = N'crdk' AND sort_order = 160 AND phase = 3     -- Create table default constraint
                                                                                                 OR action_code = N'crck' AND sort_order = 170 AND phase = 3     -- Create table check constraint
                                                                                                 OR action_code = N'dick' AND sort_order = 180 AND phase = 3     -- Disable table check constraint
+                                                                                                OR action_code = N'crvw' AND sort_order = 185 AND phase = 3     -- Create view
                                                                                                 OR action_code = N'crix' AND sort_order = 190 AND phase = 3     -- Create index
                                                                                                 OR action_code = N'diix' AND sort_order = 200 AND phase = 3     -- Disable index
                                                                                                 OR action_code = N'crfk' AND sort_order = 210 AND phase = 4     -- Create foreign key
