@@ -89,9 +89,9 @@ SELECT          cfg.schema_name,
                 CASE
                         WHEN usr.is_user_defined = 1 THEN NULL
                         WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN N'MAX'
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN col.max_length
-                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN col.max_length / 2
-                        ELSE NULL
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN CAST(col.max_length AS NVARCHAR(4))
+                        WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN CAST(col.max_length / 2 AS NVARCHAR(4))
+                        ELSE CAST(NULL AS NVARCHAR(4))
                 END AS max_length,
                 CASE 
                         WHEN usr.is_user_defined = 1 THEN NULL
