@@ -19,6 +19,15 @@ CREATE TABLE    #graphs
                         table_id INT NOT NULL,
                         column_id INT NOT NULL,
                         tag NVARCHAR(36) COLLATE DATABASE_DEFAULT NOT NULL,
+                        datatype_name SYSNAME NULL,
+                        max_length NVARCHAR(4) NULL,
+                        precision TINYINT NULL,
+                        scale TINYINT NULL,
+                        collation_name SYSNAME NULL,
+                        is_nullable NVARCHAR(3) NULL,
+                        xml_collection_name SYSNAME NULL,
+                        datatype_default_name SYSNAME NULL,
+                        datatype_rule_name SYSNAME NULL,
                         PRIMARY KEY CLUSTERED
                         (
                                 table_id,
@@ -32,7 +41,16 @@ INSERT          #graphs
                 (
                         table_id,
                         column_id,
-                        tag
+                        tag,
+                        datatype_name,
+                        max_length,
+                        precision,
+                        scale,
+                        collation_name,
+                        is_nullable,
+                        xml_collection_name,
+                        datatype_default_name,
+                        datatype_rule_name
                 )
 SELECT          col.object_id AS table_id,
                 col.column_id,
@@ -48,12 +66,21 @@ INNER JOIN      sys.columns AS col ON col.object_id = tbl.object_id
 -- Find all connected columns
 WHILE ROWCOUNT_BIG() >= 1
         BEGIN
-                WITH cteGraphs(table_id, column_id, tag)
+                WITH cteGraphs(table_id, column_id, tag, datatype_name, max_length, precision, scale, collation_name, is_nullable, xml_collection_name, datatype_default_name, datatype_rule_name)
                 AS (
                         -- Parent columns
                         SELECT          fkc.referenced_object_id AS table_id,
                                         fkc.referenced_column_id AS column_id,
-                                        grp.tag
+                                        grp.tag,
+                                        grp.datatype_name,
+                                        grp.max_length,
+                                        grp.precision,
+                                        grp.scale,
+                                        grp.collation_name,
+                                        grp.is_nullable,
+                                        grp.xml_collection_name,
+                                        grp.datatype_default_name,
+                                        grp.datatype_rule_name
                         FROM            #graphs AS grp
                         INNER JOIN      sys.foreign_key_columns AS fkc ON fkc.parent_object_id = grp.table_id
                                                 AND fkc.parent_column_id = grp.column_id
@@ -64,7 +91,16 @@ WHILE ROWCOUNT_BIG() >= 1
                         -- Child columns
                         SELECT          fkc.parent_object_id AS table_id,
                                         fkc.parent_column_id AS column_id,
-                                        grp.tag
+                                        grp.tag,
+                                        grp.datatype_name,
+                                        grp.max_length,
+                                        grp.precision,
+                                        grp.scale,
+                                        grp.collation_name,
+                                        grp.is_nullable,
+                                        grp.xml_collection_name,
+                                        grp.datatype_default_name,
+                                        grp.datatype_rule_name
                         FROM            #graphs AS grp
                         INNER JOIN      sys.foreign_key_columns AS fkc ON fkc.referenced_object_id = grp.table_id
                                                 AND fkc.referenced_column_id = grp.column_id
@@ -77,12 +113,30 @@ WHILE ROWCOUNT_BIG() >= 1
                         THEN    INSERT  (
                                                 table_id,
                                                 column_id,
-                                                tag
+                                                tag,
+                                                datatype_name,
+                                                max_length,
+                                                precision,
+                                                scale,
+                                                collation_name,
+                                                is_nullable,
+                                                xml_collection_name,
+                                                datatype_default_name,
+                                                datatype_rule_name
                                         )
                                 VALUES  (
                                                 src.table_id,
                                                 src.column_id,
-                                                src.tag
+                                                src.tag,
+                                                src.datatype_name,
+                                                src.max_length,
+                                                src.precision,
+                                                src.scale,
+                                                src.collation_name,
+                                                src.is_nullable,
+                                                src.xml_collection_name,
+                                                src.datatype_default_name,
+                                                src.datatype_rule_name
                                         );
         END;
 
@@ -93,29 +147,48 @@ AS (
                         tbl.name COLLATE DATABASE_DEFAULT AS table_name,
                         col.name COLLATE DATABASE_DEFAULT AS column_name,
                         grp.tag,
-                        usr.name COLLATE DATABASE_DEFAULT AS datatype_name,
                         CASE
+                                WHEN grp.datatype_name IS NOT NULL THEN grp.datatype_name
+                                ELSE usr.name COLLATE DATABASE_DEFAULT
+                        END AS datatype_name,
+                        CASE
+                                WHEN grp.max_length IS NOT NULL THEN grp.max_length
                                 WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nvarchar', N'varbinary', N'varchar') AND col.max_length = -1 THEN CAST(N'MAX' AS NVARCHAR(4))
                                 WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'binary', N'char', N'varbinary', N'varchar') THEN CAST(col.max_length AS NVARCHAR(4))
                                 WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'nchar', N'nvarchar') THEN CAST(col.max_length / 2 AS NVARCHAR(4))
                                 ELSE CAST(NULL AS NVARCHAR(4))
                         END AS max_length,
-                        CASE 
+                        CASE
+                                WHEN grp.precision IS NOT NULL THEN grp.precision
                                 WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'decimal', N'numeric') THEN col.precision
                                 ELSE CAST(NULL AS TINYINT)
                         END AS precision,
-                        CASE 
+                        CASE
+                                WHEN grp.scale IS NOT NULL THEN grp.scale
                                 WHEN usr.name COLLATE DATABASE_DEFAULT IN (N'datetime2', N'datetimeoffset', N'decimal', N'numeric', N'time') THEN col.scale
                                 ELSE CAST(NULL AS TINYINT)
                         END AS scale,
-                        col.collation_name COLLATE DATABASE_DEFAULT AS collation_name,
                         CASE
+                                WHEN grp.collation_name IS NOT NULL THEN grp.collation_name
+                                ELSE col.collation_name COLLATE DATABASE_DEFAULT
+                        END AS collation_name,
+                        CASE
+                                WHEN grp.is_nullable IS NOT NULL THEN grp.is_nullable
                                 WHEN col.is_nullable = 1 THEN CAST(N'yes' AS NVARCHAR(3))
                                 ELSE CAST(N'no' AS NVARCHAR(3))
                         END AS is_nullable,
-                        xsc.name COLLATE DATABASE_DEFAULT AS xml_collection_name,
-                        def.name COLLATE DATABASE_DEFAULT AS datatype_default_name,
-                        rul.name COLLATE DATABASE_DEFAULT AS datatype_rule_name,
+                        CASE
+                                WHEN grp.xml_collection_name IS NOT NULL THEN grp.xml_collection_name
+                                ELSE xsc.name COLLATE DATABASE_DEFAULT
+                        END AS xml_collection_name,
+                        CASE
+                                WHEN grp.datatype_default_name IS NOT NULL THEN grp.datatype_default_name
+                                ELSE def.name COLLATE DATABASE_DEFAULT
+                        END AS datatype_default_name,
+                        CASE
+                                WHEN grp.datatype_rule_name IS NOT NULL THEN grp.datatype_rule_name
+                                ELSE rul.name COLLATE DATABASE_DEFAULT
+                        END AS datatype_rule_name,
                         N'W' AS log_code,
                         N'Configuration was automatically replenished.' AS log_text
         FROM            #graphs AS grp
