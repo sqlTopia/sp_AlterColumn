@@ -459,13 +459,15 @@ WHERE           rul.sql_text > N''
 OPTION          (RECOMPILE);
 
 -- alco = Alter column
+-- sffx = Any statement request by user to be run after alter column
 RAISERROR(N'Adding alter column statements to atac_queue...', 10, 1) WITH NOWAIT;
 
-WITH cteColumn(schema_name, table_name, column_name, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name, is_nullable)
+WITH cteColumn(schema_name, table_name, column_name, original_datatype_name, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name, is_nullable)
 AS (
         SELECT  schema_name,
                 table_name,
                 column_name,
+                original_datatype_name,
                 datatype_name,
                 CASE
                         WHEN max_length IS NULL THEN N''
@@ -490,23 +492,28 @@ AS (
                 END AS is_nullable
         FROM    @settings
 )
-INSERT  dbo.atac_queue
-        (
-                entity,
-                action_code,
-                status_code,
-                sql_text,
-                sort_order,
-                phase
-        )
-SELECT  CONCAT(QUOTENAME(schema_name), N'.', QUOTENAME(table_name)) AS entity,
-        N'alco' AS action_code,
-        N'L' AS status_code,
-        CONCAT(N'ALTER TABLE ', QUOTENAME(schema_name), N'.', QUOTENAME(table_name), N' ALTER COLUMN ', QUOTENAME(column_name), N' ', QUOTENAME(datatype_name), max_length, precision_and_scale, collation_name, xml_collection_name, is_nullable, N';') AS sql_text,
-        100 AS sort_order,
-        3 AS phase
-FROM    cteColumn
-OPTION  (RECOMPILE);
+INSERT          dbo.atac_queue
+                (
+                        entity,
+                        action_code,
+                        status_code,
+                        sql_text,
+                        sort_order,
+                        phase
+                )
+SELECT          CONCAT(QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name)) AS entity,
+                wrk.action_code,
+                N'L' AS status_code,
+                CONCAT(N'ALTER TABLE ', QUOTENAME(cte.schema_name), N'.', QUOTENAME(cte.table_name), N' ALTER COLUMN ', QUOTENAME(cte.column_name), N' ', QUOTENAME(wrk.datatype_name), wrk.max_length, wrk.precision_and_scale, wrk.collation_name, wrk.xml_collection_name, cte.is_nullable, N';') AS sql_text,
+                wrk.sort_order,
+                3 AS phase
+FROM            cteColumn AS cte
+CROSS APPLY     (
+                        VALUES  (N'alco', 100, cte.datatype_name, cte.collation_name, cte.xml_collection_name, cte.max_length, cte.precision_and_scale, 1),
+                                (N'sffx', 110, cte.original_datatype_name, '', '', '', '', CASE WHEN cte.original_datatype_name <> cte.datatype_name THEN 1 ELSE 0 END)
+                ) AS wrk(action_code, sort_order, datatype_name, collation_name, xml_collection_name, max_length, precision_and_scale, valid)
+WHERE           wrk.valid = 1
+OPTION          (RECOMPILE);
 
 -- reco = Rename a column
 RAISERROR(N'Adding column rename statements to atac_queue...', 10, 1) WITH NOWAIT;
