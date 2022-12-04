@@ -206,6 +206,17 @@ USING   cteMetadata AS src ON src.schema_name = tgt.schema_name
                 AND src.table_name = tgt.table_name
                 AND src.column_name = tgt.column_name
                 AND src.tag = tgt.tag
+WHEN    MATCHED
+        THEN    UPDATE
+                SET     tgt.datatype_name = src.datatype_name,
+                        tgt.max_length = src.max_length,
+                        tgt.precision = src.precision,
+                        tgt.scale = src.scale,
+                        tgt.collation_name = src.collation_name,
+                        tgt.is_nullable = src.is_nullable,
+                        tgt.xml_collection_name = src.xml_collection_name,
+                        tgt.datatype_default_name = src.datatype_default_name,
+                        tgt.datatype_rule_name = src.datatype_rule_name
 WHEN    NOT MATCHED BY TARGET
         THEN    INSERT  (
                                 schema_name,
