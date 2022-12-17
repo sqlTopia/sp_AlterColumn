@@ -197,7 +197,7 @@ BEGIN TRY
         -- Transaction count
         IF @@TRANCOUNT >= 1
                 BEGIN
-                        RAISERROR('sp_AlterColumn cannot be run inside a transaction.', 18, 1);
+                        RAISERROR('sp_AlterColumn is not allowed to run inside a transaction.', 18, 1);
                 END;
 
         -- Processing has started
@@ -426,8 +426,6 @@ BEGIN TRY
         -- Fetch future payload
         RAISERROR('  Replenishing configurations...', 10, 1) WITH NOWAIT;
 
-        truncate table #future;
--- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
         INSERT          #future
                         (
                                 tag,
@@ -452,7 +450,6 @@ BEGIN TRY
                                 is_replenished,
                                 log_text
                         )
--- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
         SELECT          cfg.tag,
                         tbl.object_id AS table_id,
                         cfg.table_name,
@@ -468,8 +465,9 @@ BEGIN TRY
                         END AS is_nullable,
                         cfg.datatype_name,
                         CASE
-                                WHEN cfg.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') AND cfg.max_length = 'MAX' THEN -1
-                                WHEN cfg.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') AND cfg.max_length IS NOT NULL THEN cfg.max_length
+                                WHEN cfg.datatype_name IN ('nvarchar', 'varbinary', 'varchar') AND cfg.max_length = 'MAX' THEN -1
+                                WHEN cfg.datatype_name IN ('binary', 'char', 'varbinary', 'varchar') AND cfg.max_length IS NOT NULL THEN CAST(cfg.max_length AS SMALLINT)
+                                WHEN cfg.datatype_name IN ('nchar', 'nvarchar') AND cfg.max_length IS NOT NULL THEN CAST(2 * cfg.max_length AS SMALLINT)
                                 ELSE cur.max_length
                         END AS max_length,
                         CASE
@@ -529,7 +527,7 @@ BEGIN TRY
         ORDER BY        cfg.table_name,
                         cfg.column_name,
                         cfg.tag;
-
+                        
         UPDATE          cfg
         SET             cfg.log_text = fut.log_text
         FROM            dbo.atac_configurations AS cfg
@@ -538,26 +536,24 @@ BEGIN TRY
         WHERE           fut.log_text IS NOT NULL;
  
         -- Get all connected columns to validate properly
--- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
         WITH cte_graphs(graph_id, tag, collation_name)
         AS (
--- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
                 SELECT  fut.graph_id,
                         fut.tag,
                         fut.collation_name
                 FROM    #future AS fut
+                WHERE   fut.node_count >= 2
 
                 UNION
 
--- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
-                SELECT          rul.graph_id,
+                SELECT          cur.graph_id,
                                 '' AS tag,
                                 @database_collation_name AS collation_name
-                FROM            #current AS rul
-                INNER JOIN      sys.computed_columns AS cc ON cc.object_id = rul.table_id
-                                        AND cc.column_id = rul.column_id
+                FROM            #current AS cur
+                INNER JOIN      sys.computed_columns AS cc ON cc.object_id = cur.table_id
+                                        AND cc.column_id = cur.column_id
                 WHERE           @database_collation_name IS NOT NULL
-                                AND rul.node_count >= 2
+                                AND cur.node_count >= 2
         )
         MERGE   #future AS tgt
         USING   (
@@ -842,8 +838,6 @@ BEGIN TRY
                         RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
                 END;
 
-truncate table #configurations;
-
         -- Build statement parts
         WITH cte_configurations(table_id, table_name, column_id, column_name, new_column_name, is_computed, is_user_defined, is_nullable, datatype_name, max_length, precision, scale, collation_name, xml_collection_name, datatype_default_name, datatype_rule_name)
         AS (
@@ -940,7 +934,8 @@ truncate table #configurations;
                         END AS collation_name,
                         CASE
                                 WHEN cte.is_user_defined = 1 THEN NULL
-                                WHEN cte.datatype_name = 'xml' AND cte.xml_collection_name > '' THEN cte.xml_collection_name
+                                WHEN cte.datatype_name = 'xml' THEN cte.xml_collection_name
+                                ELSE NULL
                         END AS xml_collection_name,
                         cte.datatype_default_name,
                         cte.datatype_rule_name,
@@ -2148,7 +2143,6 @@ truncate table #configurations;
                         END AS xml_collection_name
                 FROM    #configurations AS cfg
                 WHERE   cfg.is_computed = 0
-                        and cfg.datatype_name = 'nvarchar' and max_length = '4096'
         )
         INSERT  dbo.atac_queue
                 (
