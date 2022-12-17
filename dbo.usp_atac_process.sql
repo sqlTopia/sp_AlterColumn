@@ -23,7 +23,7 @@ DECLARE @statement_id INT,
         @error_number INT,
         @delay CHAR(12) = @wait_time;
 
--- Elevate permissions
+-- Elevated permissions
 IF HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER') IS NULL OR HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER') = 0
         BEGIN
                 RAISERROR('You are not allowed to alter database.', 18, 1);
@@ -137,7 +137,7 @@ BEGIN TRY
                                                                         BEGIN TRY
                                                                                 -- Excute current statement
                                                                                 EXEC    (@sql_text);
-                                                                                
+
                                                                                 -- Update processed and end time
                                                                                 UPDATE  aqe
                                                                                 SET     aqe.status_code = 'F',
@@ -186,7 +186,7 @@ BEGIN TRY
                                                                                         BREAK;
                                                                                 END;
 
-                                                                        RAISERROR('Retry attempt %d.', 18, 1, @current_retry_count) WITH NOWAIT;
+                                                                        RAISERROR('Retry attempt %d.', 10, 1, @current_retry_count) WITH NOWAIT;
 
                                                                         IF @current_retry_count > @maximum_retry_count
                                                                                 BEGIN
