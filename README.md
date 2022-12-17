@@ -1,4 +1,4 @@
-sp_AlterColumn accepts batch processing on multiple columns, even changing the database collation.
+sp_AlterColumn does batch processing on multiple columns, even changing the database collation.
 
 As the name implies, this is a procedure that helps developers and DBAs to alter columns in many different ways.
 The problem sp_AlterColumn solves is when you need to change a column datatype (for example INT to BIGINT) and there are a lot of foreign keys, indexes, computed columns, check constraints, legacy data type rules to mention a few, that prevent you from doing a single ALTER COLUMN.
