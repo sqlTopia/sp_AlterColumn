@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.usp_atac_process', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.usp_atac_process AS');
 GO
-CREATE PROCEDURE dbo.usp_atac_process
+ALTER PROCEDURE dbo. usp_atac_process
 (
         @process_statements INT = 2147483647,
         @maximum_retry_count TINYINT = 100,
@@ -137,7 +137,7 @@ BEGIN TRY
                                                                         BEGIN TRY
                                                                                 -- Excute current statement
                                                                                 EXEC    (@sql_text);
-
+                                                                                
                                                                                 -- Update processed and end time
                                                                                 UPDATE  aqe
                                                                                 SET     aqe.status_code = 'F',
