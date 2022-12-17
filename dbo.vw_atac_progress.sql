@@ -16,12 +16,12 @@ SELECT TOP(25)  aqe.statement_id,
                 aqe.entity,
                 aqe.phase,
                 aqe.sql_text,
-                CAST(100E * (aqe.statement_id - 1) / wrk.total_items AS DECIMAL(5, 2)) AS this_progress,
+                CAST(100E * (aqe.statement_id - 1) / wrk.total_items AS DECIMAL(5, 2)) AS statement_progress,
                 CAST(100E * wrk.finished_items / wrk.total_items AS DECIMAL(5, 2)) AS total_progress
 FROM            dbo.atac_queue AS aqe WITH (NOLOCK)
 CROSS JOIN      (
                         SELECT  SUM(CASE WHEN aqe.status_code = 'F' THEN 1 ELSE 0 END) AS finished_items,
-                                COUNT(*) AS total_items
+                                MAX(aqe.statement_id) AS total_items
                         FROM    dbo.atac_queue AS aqe WITH (NOLOCK)
                 ) AS wrk
 WHERE           aqe.status_code <> 'F'
