@@ -42,6 +42,7 @@ CREATE TABLE    #configurations
                         new_column_name VARCHAR(128) COLLATE DATABASE_DEFAULT NULL,
                         is_nullable VARCHAR(5) COLLATE DATABASE_DEFAULT NOT NULL,
                         datatype_name VARCHAR(128) COLLATE DATABASE_DEFAULT NOT NULL,
+                        system_datatype_name VARCHAR(128) COLLATE DATABASE_DEFAULT NOT NULL,
                         is_computed BIT NOT NULL,
                         is_user_defined BIT NOT NULL,
                         max_length VARCHAR(4) COLLATE DATABASE_DEFAULT NULL,
@@ -66,6 +67,7 @@ CREATE TABLE    #current
                         is_user_defined BIT NOT NULL,
                         is_nullable BIT NOT NULL,
                         datatype_name VARCHAR(128) COLLATE DATABASE_DEFAULT NOT NULL,
+                        system_datatype_name VARCHAR(128) COLLATE DATABASE_DEFAULT NOT NULL,
                         max_length SMALLINT NOT NULL,
                         precision TINYINT NOT NULL,
                         scale TINYINT NOT NULL,
@@ -101,6 +103,7 @@ CREATE TABLE    #future
                         is_user_defined BIT NULL,
                         is_nullable BIT NULL,
                         datatype_name VARCHAR(128) COLLATE DATABASE_DEFAULT NULL,
+                        system_datatype_name VARCHAR(128) COLLATE DATABASE_DEFAULT NOT NULL,
                         max_length SMALLINT NULL,
                         precision TINYINT NULL,
                         scale TINYINT NULL,
@@ -320,6 +323,7 @@ BEGIN TRY
                                 is_user_defined,
                                 is_nullable,
                                 datatype_name,
+                                system_datatype_name,
                                 max_length,
                                 precision,
                                 scale,
@@ -338,6 +342,7 @@ BEGIN TRY
                         usr.is_user_defined,
                         col.is_nullable,
                         usr.name COLLATE DATABASE_DEFAULT AS datatype_name,
+                        typ.name COLLATE DATABASE_DEFAULT AS system_datatype_name,
                         col.max_length,
                         col.precision,
                         col.scale,
@@ -351,10 +356,11 @@ BEGIN TRY
         INNER JOIN      sys.tables AS tbl ON tbl.object_id = col.object_id
         INNER JOIN      sys.schemas AS sch ON sch.schema_id = tbl.schema_id
         INNER JOIN      sys.types AS usr ON usr.user_type_id = col.user_type_id
+        INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
         LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
         LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
         LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id
-        ORDER BY        col.object_id,
+        ORDER BY        col.object_id,        
                         col.column_id;
 
         -- Get graphs
@@ -438,6 +444,7 @@ BEGIN TRY
                                 is_user_defined,
                                 is_nullable,
                                 datatype_name,
+                                system_datatype_name,
                                 max_length,
                                 precision,
                                 scale,
@@ -464,29 +471,29 @@ BEGIN TRY
                                 ELSE col.is_nullable
                         END AS is_nullable,
                         cfg.datatype_name,
+                        typ.name AS system_datatype_name,
                         CASE
-                                WHEN cfg.datatype_name IN ('nvarchar', 'varbinary', 'varchar') AND cfg.max_length = 'MAX' THEN -1
-                                WHEN cfg.datatype_name IN ('binary', 'char', 'varbinary', 'varchar') AND cfg.max_length IS NOT NULL THEN CAST(cfg.max_length AS SMALLINT)
-                                WHEN cfg.datatype_name IN ('nchar', 'nvarchar') AND cfg.max_length IS NOT NULL THEN CAST(2 * cfg.max_length AS SMALLINT)
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('nvarchar', 'varbinary', 'varchar') AND cfg.max_length = 'MAX' THEN -1
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('binary', 'char', 'varbinary', 'varchar') AND cfg.max_length IS NOT NULL THEN CAST(cfg.max_length AS SMALLINT)
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('nchar', 'nvarchar') AND cfg.max_length IS NOT NULL THEN CAST(2 * cfg.max_length AS SMALLINT)
                                 ELSE cur.max_length
                         END AS max_length,
                         CASE
-                                WHEN cfg.datatype_name IN ('decimal', 'numeric') AND cfg.precision IS NOT NULL THEN cfg.precision
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('decimal', 'numeric') AND cfg.precision IS NOT NULL THEN cfg.precision
                                 ELSE cur.precision
                         END AS precision,
                         CASE
-                                WHEN cfg.datatype_name IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') AND cfg.scale IS NOT NULL THEN cfg.scale
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') AND cfg.scale IS NOT NULL THEN cfg.scale
                                 ELSE cur.scale
                         END AS scale,
                         CASE
-                                WHEN cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar') AND cfg.collation_name > '' THEN cfg.collation_name
-                                WHEN cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar') THEN COALESCE(@database_collation_name, cur.collation_name)
-                                WHEN cur.collation_name IS NOT NULL THEN COALESCE(@database_collation_name, cur.collation_name)
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('char', 'nchar', 'nvarchar', 'varchar') AND cfg.collation_name > '' THEN cfg.collation_name
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('char', 'nchar', 'nvarchar', 'varchar') THEN COALESCE(@database_collation_name, cur.collation_name)
                                 ELSE NULL
                         END AS collation_name,
                         CASE
-                                WHEN cfg.datatype_name = 'xml' AND cfg.xml_collection_name >= '' THEN cfg.xml_collection_name
-                                ELSE cur.xml_collection_name
+                                WHEN typ.name COLLATE DATABASE_DEFAULT = 'xml' AND cfg.xml_collection_name >= '' THEN cfg.xml_collection_name
+                                ELSE NULL
                         END AS xml_collection_name,
                         CASE
                                 WHEN cfg.datatype_default_name >= '' THEN cfg.datatype_default_name
@@ -516,6 +523,7 @@ BEGIN TRY
         LEFT JOIN       sys.columns AS col ON col.object_id = tbl.object_id
                                 AND col.name COLLATE DATABASE_DEFAULT = cfg.column_name
         LEFT JOIN       sys.types AS usr ON usr.name COLLATE DATABASE_DEFAULT = cfg.datatype_name
+        LEFT JOIN       sys.types AS typ ON typ.user_type_id = usr.system_type_id
         LEFT JOIN       sys.fn_helpcollations() AS hc ON hc.name COLLATE DATABASE_DEFAULT = cfg.collation_name
         LEFT JOIN       sys.xml_schema_collections AS xsc ON CONCAT(SCHEMA_NAME(xsc.schema_id) COLLATE DATABASE_DEFAULT, '.', xsc.name COLLATE DATABASE_DEFAULT) = cfg.xml_collection_name
         LEFT JOIN       sys.objects AS def ON def.name COLLATE DATABASE_DEFAULT = cfg.datatype_default_name
@@ -527,12 +535,12 @@ BEGIN TRY
         ORDER BY        cfg.table_name,
                         cfg.column_name,
                         cfg.tag;
-                        
+
         UPDATE          cfg
         SET             cfg.log_text = fut.log_text
         FROM            dbo.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name COLLATE DATABASE_DEFAULT = cfg.table_name
-                                AND fut.column_name COLLATE DATABASE_DEFAULT = cfg.column_name
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND fut.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
  
         -- Get all connected columns to validate properly
@@ -557,7 +565,7 @@ BEGIN TRY
         )
         MERGE   #future AS tgt
         USING   (
-                        SELECT          cte.tag,
+                        SELECT DISTINCT cte.tag,
                                         cur.table_id,
                                         cur.table_name,
                                         cur.column_id,
@@ -566,6 +574,7 @@ BEGIN TRY
                                         cur.is_computed,
                                         cur.is_nullable,
                                         cur.datatype_name,
+                                        cur.system_datatype_name,
                                         cur.max_length,
                                         cur.precision,
                                         cur.scale,
@@ -592,6 +601,7 @@ BEGIN TRY
                                         is_computed,
                                         is_nullable,
                                         datatype_name,
+                                        system_datatype_name,
                                         max_length,
                                         precision,
                                         scale,
@@ -613,6 +623,7 @@ BEGIN TRY
                                         src.is_computed,
                                         src.is_nullable,
                                         src.datatype_name,
+                                        src.system_datatype_name,
                                         src.max_length,
                                         src.precision,
                                         src.scale,
@@ -638,8 +649,8 @@ BEGIN TRY
         UPDATE          cfg
         SET             cfg.log_text = fut.log_text
         FROM            dbo.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name COLLATE DATABASE_DEFAULT = cfg.table_name
-                                AND fut.column_name COLLATE DATABASE_DEFAULT = cfg.column_name
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND fut.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
 
         DELETE  fut
@@ -677,8 +688,8 @@ BEGIN TRY
         UPDATE          cfg
         SET             cfg.log_text = fut.log_text
         FROM            dbo.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name COLLATE DATABASE_DEFAULT = cfg.table_name
-                                AND cfg.column_name COLLATE DATABASE_DEFAULT = cfg.column_name
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND cfg.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
 
         DELETE  fut
@@ -800,13 +811,15 @@ BEGIN TRY
         UPDATE          cfg
         SET             cfg.log_text = fut.log_text
         FROM            dbo.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name COLLATE DATABASE_DEFAULT = cfg.table_name
-                                AND fut.column_name COLLATE DATABASE_DEFAULT = cfg.column_name
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND fut.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
 
         DELETE  fut
         FROM    #future AS fut
         WHERE   fut.log_text IS NOT NULL;
+
+        ALTER INDEX ALL ON dbo.atac_configurations REBUILD WITH (FILLFACTOR = 100, DATA_COMPRESSION = NONE);
 
         -- Is there a configuration error
         IF EXISTS(SELECT * FROM dbo.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
@@ -827,8 +840,8 @@ BEGIN TRY
                                         cfg.datatype_rule_name,
                                         cfg.log_text
                         FROM            dbo.atac_configurations AS cfg
-                        INNER JOIN      #current AS cur ON cur.table_name COLLATE DATABASE_DEFAULT = cfg.table_name
-                                                AND cur.column_name COLLATE DATABASE_DEFAULT = cfg.column_name
+                        INNER JOIN      #current AS cur ON cur.table_name = cfg.table_name
+                                                AND cur.column_name = cfg.column_name
                         WHERE           cfg.log_text IS NOT NULL
                         ORDER BY        cfg.tag,
                                         cur.graph_id,
@@ -839,7 +852,7 @@ BEGIN TRY
                 END;
 
         -- Build statement parts
-        WITH cte_configurations(table_id, table_name, column_id, column_name, new_column_name, is_computed, is_user_defined, is_nullable, datatype_name, max_length, precision, scale, collation_name, xml_collection_name, datatype_default_name, datatype_rule_name)
+        WITH cte_configurations(table_id, table_name, column_id, column_name, new_column_name, is_computed, is_user_defined, is_nullable, datatype_name, system_datatype_name, max_length, precision, scale, collation_name, xml_collection_name, datatype_default_name, datatype_rule_name)
         AS (
                 SELECT  fut.table_id,
                         fut.table_name,
@@ -850,6 +863,7 @@ BEGIN TRY
                         fut.is_user_defined,
                         fut.is_nullable,
                         fut.datatype_name,
+                        fut.system_datatype_name,
                         fut.max_length,
                         fut.precision,
                         fut.scale,
@@ -870,6 +884,7 @@ BEGIN TRY
                         cur.is_user_defined,
                         cur.is_nullable,
                         cur.datatype_name,
+                        cur.system_datatype_name,
                         cur.max_length,
                         cur.precision,
                         cur.scale,
@@ -890,6 +905,7 @@ BEGIN TRY
                                 is_user_defined,
                                 is_nullable,
                                 datatype_name,
+                                system_datatype_name,
                                 max_length,
                                 precision,
                                 scale,
@@ -911,13 +927,14 @@ BEGIN TRY
                                 ELSE 'false'
                         END AS is_nullable,
                         cte.datatype_name,
+                        cte.system_datatype_name,
                         CASE
                                 WHEN cte.is_user_defined = 1 THEN NULL
                                 WHEN cte.datatype_name IN ('nvarchar', 'varbinary', 'varchar') AND cte.max_length = -1 THEN 'MAX'
                                 WHEN cte.datatype_name IN ('binary', 'char', 'varbinary', 'varchar') THEN CAST(cte.max_length AS VARCHAR(4))
                                 WHEN cte.datatype_name IN ('nchar', 'nvarchar') THEN CAST(cte.max_length / 2 AS VARCHAR(4))
                                 ELSE NULL
-                        END,
+                        END AS max_length,
                         CASE
                                 WHEN cte.is_user_defined = 1 THEN NULL
                                 WHEN cte.datatype_name IN ('decimal', 'numeric') THEN cte.precision
@@ -943,6 +960,11 @@ BEGIN TRY
         FROM            cte_configurations AS cte
         ORDER BY        cte.table_name,
                         cte.column_name;
+
+        DELETE  cfg
+        FROM    #configurations AS cfg
+        WHERE   cfg.system_datatype_name IN ('ntext', 'text')
+                AND cfg.collation_name IS NOT NULL;
 
         IF NOT EXISTS(SELECT * FROM #configurations AS cfg) AND @database_collation_name IS NULL
                 BEGIN
@@ -2268,7 +2290,7 @@ BEGIN TRY
         FROM    cte_sort AS cte
         WHERE   cte.statement_id <> cte.rnk;
 
-        ALTER INDEX ALL ON dbo.atac_queue REBUILD WITH (FILLFACTOR = 100, DATA_COMPRESSION = PAGE);
+        ALTER INDEX ALL ON dbo.atac_queue REBUILD WITH (FILLFACTOR = 100, DATA_COMPRESSION = NONE);
 
         /*
                 Prepare SQL Agent jobs
