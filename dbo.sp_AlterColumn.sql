@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.sp_AlterColumn', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.sp_AlterColumn AS');
 GO
-ALTER PROCEDURE sp_AlterColumn
+ALTER PROCEDURE dbo.sp_AlterColumn
 (
         @use_sql_agent BIT = 0,
         @database_collation_name VARCHAR(128) = NULL,
@@ -420,7 +420,6 @@ BEGIN TRY
         -- Fetch future payload
         RAISERROR('  Replenishing configurations...', 10, 1) WITH NOWAIT;
 
--- DECLARE @database_collation_name VARCHAR(128) = NULL;
         INSERT          #future
                         (
                                 tag,
@@ -529,7 +528,6 @@ BEGIN TRY
         WHERE           fut.log_text IS NOT NULL;
  
         -- Get all connected columns to validate properly
-
         WITH cte_graphs(graph_id, tag, collation_name)
         AS (
                 SELECT  fut.graph_id,
@@ -1943,9 +1941,8 @@ BEGIN TRY
                                         AND tbl.type COLLATE DATABASE_DEFAULT = 'U'
                 INNER JOIN      sys.schemas AS sch ON sch.schema_id = tbl.schema_id
                 LEFT JOIN       #configurations AS wrk ON wrk.table_id = col.object_id
-                                        AND wrk.column_name = col.name COLLATE DATABASE_DEFAULT
                 WHERE           (
-                                        wrk.table_id IS NOT NULL
+                                        wrk.column_id = col.column_id
                                         OR CHARINDEX(QUOTENAME(wrk.column_name), col.definition COLLATE DATABASE_DEFAULT) >= 1
                                 )
                                 OR @database_collation_name IS NOT NULL
