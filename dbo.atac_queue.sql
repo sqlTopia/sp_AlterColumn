@@ -75,7 +75,7 @@ CREATE TABLE    dbo.atac_queue
                 );
 GO
 CREATE NONCLUSTERED INDEX ix_atac_queue_status_code ON dbo.atac_queue (status_code, phase)
-INCLUDE(session_id, action_code, statement_start, sql_text, log_text, entity)
+INCLUDE(session_id, action_code, statement_start, statement_end, sql_text, log_text, entity)
 WHERE status_code IN ('E', 'L', 'R', 'W');
 GO
 CREATE NONCLUSTERED INDEX ix_atac_queue_phase ON dbo.atac_queue (phase)
