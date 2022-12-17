@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.vw_atac_progress', 'V') IS NULL
         EXEC(N'CREATE VIEW dbo.vw_atac_progress AS SELECT 1 AS Yak');
 GO
-ALTER VIEW vw_atac_progress
+ALTER VIEW dbo.vw_atac_progress
 AS
 
 SELECT TOP(25)  aqe.statement_id,
