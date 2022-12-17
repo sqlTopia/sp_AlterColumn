@@ -194,6 +194,12 @@ BEGIN TRY
 
         RAISERROR('Processing is starting...', 10, 1) WITH NOWAIT;
 
+        -- Transaction count
+        IF @@TRANCOUNT >= 1
+                BEGIN
+                        RAISERROR('sp_AlterColumn cannot be run inside a transaction.', 18, 1);
+                END;
+
         -- Processing has started
         IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.status_code != 'L')
                 BEGIN
@@ -420,6 +426,8 @@ BEGIN TRY
         -- Fetch future payload
         RAISERROR('  Replenishing configurations...', 10, 1) WITH NOWAIT;
 
+        truncate table #future;
+-- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
         INSERT          #future
                         (
                                 tag,
@@ -444,6 +452,7 @@ BEGIN TRY
                                 is_replenished,
                                 log_text
                         )
+-- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
         SELECT          cfg.tag,
                         tbl.object_id AS table_id,
                         cfg.table_name,
@@ -461,32 +470,33 @@ BEGIN TRY
                         CASE
                                 WHEN cfg.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') AND cfg.max_length = 'MAX' THEN -1
                                 WHEN cfg.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') AND cfg.max_length IS NOT NULL THEN cfg.max_length
-                                ELSE col.max_length
+                                ELSE cur.max_length
                         END AS max_length,
                         CASE
                                 WHEN cfg.datatype_name IN ('decimal', 'numeric') AND cfg.precision IS NOT NULL THEN cfg.precision
-                                ELSE col.precision
+                                ELSE cur.precision
                         END AS precision,
                         CASE
                                 WHEN cfg.datatype_name IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') AND cfg.scale IS NOT NULL THEN cfg.scale
-                                ELSE col.scale
+                                ELSE cur.scale
                         END AS scale,
                         CASE
-                                WHEN cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar') AND cfg.collation_name = '' THEN COALESCE(@database_collation_name, CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS VARCHAR(128)))
-                                WHEN cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar') AND cfg.collation_name IS NOT NULL THEN cfg.collation_name
-                                ELSE COALESCE(@database_collation_name, col.collation_name COLLATE DATABASE_DEFAULT)
+                                WHEN cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar') AND cfg.collation_name > '' THEN cfg.collation_name
+                                WHEN cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar') THEN COALESCE(@database_collation_name, cur.collation_name)
+                                WHEN cur.collation_name IS NOT NULL THEN COALESCE(@database_collation_name, cur.collation_name)
+                                ELSE NULL
                         END AS collation_name,
                         CASE
                                 WHEN cfg.datatype_name = 'xml' AND cfg.xml_collection_name >= '' THEN cfg.xml_collection_name
-                                ELSE xsc.name COLLATE DATABASE_DEFAULT
+                                ELSE cur.xml_collection_name
                         END AS xml_collection_name,
                         CASE
                                 WHEN cfg.datatype_default_name >= '' THEN cfg.datatype_default_name
-                                ELSE cur.datatype_default_name COLLATE DATABASE_DEFAULT
+                                ELSE cur.datatype_default_name
                         END AS datatype_default_name,
                         CASE
                                 WHEN cfg.datatype_rule_name >= '' THEN cfg.datatype_rule_name
-                                ELSE cur.datatype_rule_name COLLATE DATABASE_DEFAULT
+                                ELSE cur.datatype_rule_name
                         END AS datatype_rule_name,
                         cur.graph_id,
                         cur.node_count,
@@ -528,8 +538,10 @@ BEGIN TRY
         WHERE           fut.log_text IS NOT NULL;
  
         -- Get all connected columns to validate properly
+-- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
         WITH cte_graphs(graph_id, tag, collation_name)
         AS (
+-- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
                 SELECT  fut.graph_id,
                         fut.tag,
                         fut.collation_name
@@ -537,6 +549,7 @@ BEGIN TRY
 
                 UNION
 
+-- DECLARE @database_collation_name VARCHAR(128) = 'Finnish_Swedish_100_CI_AS_SC_UTF8';
                 SELECT          rul.graph_id,
                                 '' AS tag,
                                 @database_collation_name AS collation_name
@@ -764,8 +777,8 @@ BEGIN TRY
         WITH cte_collation_name(log_text, mi, mx, graph_id, is_replenished)
         AS (
                 SELECT  fut.log_text,
-                        MIN(COALESCE(fut.collation_name, '#')) OVER (PARTITION BY fut.graph_id) AS mi,
-                        MAX(COALESCE(fut.collation_name, '#')) OVER (PARTITION BY fut.graph_id) AS mx,
+                        MIN(COALESCE(fut.collation_name, '')) OVER (PARTITION BY fut.graph_id) AS mi,
+                        MAX(COALESCE(fut.collation_name, '')) OVER (PARTITION BY fut.graph_id) AS mx,
                         fut.graph_id,
                         fut.is_replenished
                 FROM    #future AS fut
@@ -799,25 +812,6 @@ BEGIN TRY
         FROM    #future AS fut
         WHERE   fut.log_text IS NOT NULL;
 
-        UPDATE          cfg
-        SET             cfg.max_length = NULL,
-                        cfg.precision = NULL,
-                        cfg.scale = NULL,
-                        cfg.collation_name = NULL,
-                        cfg.xml_collection_name = NULL,
-                        cfg.log_text = 'Configuration was updated'
-        FROM            dbo.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.tag COLLATE DATABASE_DEFAULT = cfg.tag
-                                AND fut.table_name COLLATE DATABASE_DEFAULT = cfg.table_name
-                                AND fut.column_name COLLATE DATABASE_DEFAULT = cfg.column_name
-                                AND fut.is_user_defined = 1
-                                AND fut.is_replenished = 0
-        WHERE           cfg.max_length IS NOT NULL
-                        OR cfg.precision IS NOT NULL
-                        OR cfg.scale IS NOT NULL
-                        OR cfg.collation_name IS NOT NULL
-                        OR cfg.xml_collection_name IS NOT NULL;
-
         -- Is there a configuration error
         IF EXISTS(SELECT * FROM dbo.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
                 BEGIN
@@ -847,6 +841,8 @@ BEGIN TRY
 
                         RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
                 END;
+
+truncate table #configurations;
 
         -- Build statement parts
         WITH cte_configurations(table_id, table_name, column_id, column_name, new_column_name, is_computed, is_user_defined, is_nullable, datatype_name, max_length, precision, scale, collation_name, xml_collection_name, datatype_default_name, datatype_rule_name)
@@ -923,7 +919,9 @@ BEGIN TRY
                         cte.datatype_name,
                         CASE
                                 WHEN cte.is_user_defined = 1 THEN NULL
-                                WHEN cte.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') THEN cte.max_length
+                                WHEN cte.datatype_name IN ('nvarchar', 'varbinary', 'varchar') AND cte.max_length = -1 THEN 'MAX'
+                                WHEN cte.datatype_name IN ('binary', 'char', 'varbinary', 'varchar') THEN CAST(cte.max_length AS VARCHAR(4))
+                                WHEN cte.datatype_name IN ('nchar', 'nvarchar') THEN CAST(cte.max_length / 2 AS VARCHAR(4))
                                 ELSE NULL
                         END,
                         CASE
@@ -942,7 +940,7 @@ BEGIN TRY
                         END AS collation_name,
                         CASE
                                 WHEN cte.is_user_defined = 1 THEN NULL
-                                WHEN cte.datatype_name = 'xml' THEN cte.xml_collection_name
+                                WHEN cte.datatype_name = 'xml' AND cte.xml_collection_name > '' THEN cte.xml_collection_name
                         END AS xml_collection_name,
                         cte.datatype_default_name,
                         cte.datatype_rule_name,
@@ -1150,37 +1148,26 @@ BEGIN TRY
                                                 END;
 
                                         -- Build statement
-                                        SELECT          @helper =       CASE
-                                                                                WHEN fut.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') AND fut.max_length = -1 THEN '(MAX)'
-                                                                                WHEN fut.datatype_name IN ('nchar', 'nvarchar') THEN CONCAT('(', fut.max_length / 2, ')')
-                                                                                WHEN fut.datatype_name IN ('binary', 'char', 'varbinary', 'varchar') THEN CONCAT('(', fut.max_length, ')')
-                                                                                WHEN fut.datatype_name IN ('decimal', 'numeric') THEN CONCAT('(', fut.precision, ', ', fut.scale, ')')
-                                                                                WHEN fut.datatype_name IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') THEN CONCAT('(', fut.scale, ')')
-                                                                                WHEN fut.datatype_name = 'xml' AND fut.xml_collection_name >= '' THEN CONCAT('(', cfg.xml_collection_name, ')')
-                                                                                ELSE ''
-                                                                        END
-                                        FROM            #configurations AS cfg
-                                        INNER JOIN      #future AS fut ON fut.table_id = cfg.table_id
-                                                                AND fut.column_id = cfg.column_id
-                                        WHERE           cfg.id = @curr_id;
+                                        SELECT  @helper =       CASE
+                                                                        WHEN cfg.datatype_name IN ('binary', 'char', 'nchar', 'nvarchar', 'varbinary', 'varchar') THEN CONCAT('(', cfg.max_length, ')')
+                                                                        WHEN cfg.datatype_name IN ('decimal', 'numeric') THEN CONCAT('(', cfg.precision, ', ', cfg.scale, ')')
+                                                                        WHEN cfg.datatype_name IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') THEN CONCAT('(', cfg.scale, ')')
+                                                                        WHEN cfg.datatype_name = 'xml' THEN CONCAT('(', cfg.xml_collection_name, ')')
+                                                                        ELSE ''
+                                                                END
+                                        FROM    #configurations AS cfg
+                                        WHERE   cfg.id = @curr_id;
 
-                                        SELECT          @helper +=      CASE
-                                                                                WHEN fut.collation_name > '' THEN CONCAT(' COLLATE ', COALESCE(@database_collation_name, CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS VARCHAR(128))))
-                                                                                WHEN fut.collation_name IS NOT NULL THEN CONCAT(' COLLATE ', cfg.collation_name)
-                                                                                ELSE ''
-                                                                        END
-                                        FROM            #configurations AS cfg
-                                        INNER JOIN      #future AS fut ON fut.table_id = cfg.table_id
-                                                                AND fut.column_id = cfg.column_id
-                                                                AND fut.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar')
-                                        WHERE           cfg.id = @curr_id;
+                                        SELECT  @helper += CONCAT(' COLLATE ', cfg.collation_name)
+                                        FROM    #configurations AS cfg
+                                        WHERE   cfg.id = @curr_id
+                                                AND cfg.datatype_name IN ('char', 'nchar', 'nvarchar', 'sysname', 'varchar')
+                                                AND cfg.collation_name > '';
 
                                         -- TODO::: Specificera per datatyp ex max_length för strängar eller domain för integers
-                                        SELECT          @sql = CONCAT('IF EXISTS(SELECT * FROM ', QUOTENAME(PARSENAME(cfg.table_name, 2)), '.', QUOTENAME(PARSENAME(cfg.table_name, 1)), ' WHERE TRY_CAST(', QUOTENAME(cfg.column_name), ' AS ', QUOTENAME(cfg.datatype_name), @helper, ') IS NULL AND ', QUOTENAME(cfg.column_name), ' IS NOT NULL OR TRY_CAST(', QUOTENAME(cfg.column_name), ' AS ', QUOTENAME(cfg.datatype_name), @helper, ') <> ', QUOTENAME(cfg.column_name), ') BEGIN UPDATE cfg SET cfg.is_inline_conversion_possible = 0 WHERE cfg.id = ', @curr_id, ' END;')
-                                        FROM            #configurations AS cfg
-                                        INNER JOIN      #future AS fut ON fut.table_id = cfg.table_id
-                                                                AND fut.column_id = cfg.column_id
-                                        WHERE           cfg.id = @curr_id;
+                                        SELECT  @sql = CONCAT('IF EXISTS(SELECT * FROM ', QUOTENAME(PARSENAME(cfg.table_name, 2)), '.', QUOTENAME(PARSENAME(cfg.table_name, 1)), ' WHERE TRY_CAST(', QUOTENAME(cfg.column_name), ' AS ', QUOTENAME(cfg.datatype_name), @helper, ') IS NULL AND ', QUOTENAME(cfg.column_name), ' IS NOT NULL OR TRY_CAST(', QUOTENAME(cfg.column_name), ' AS ', QUOTENAME(cfg.datatype_name), @helper, ') <> ', QUOTENAME(cfg.column_name), ') BEGIN UPDATE cfg SET cfg.is_inline_conversion_possible = 0 WHERE cfg.id = ', @curr_id, ' END;')
+                                        FROM    #configurations AS cfg
+                                        WHERE   cfg.id = @curr_id;
 
                                         EXEC    (@sql);
 
@@ -2026,7 +2013,7 @@ BEGIN TRY
                                         ),
                                         (
                                                 'bidf',
-                                                CASE WHEN cte.datatype_default_name = '' THEN NULL ELSE 270 END,
+                                                CASE WHEN cte.datatype_default_name = '' THEN NULL ELSE 250 END,
                                                 6,
                                                 CONCAT('EXEC sys.sp_bindefault @defname = ', QUOTENAME(cte.datatype_default_name, ''''), ', @objname = ''', REPLACE(CONCAT(cte.table_name, '.', CASE WHEN cte.new_column_name > '' THEN QUOTENAME(cte.new_column_name) ELSE cte.column_name END), '''', ''''''), ''';')
                                         )
@@ -2081,7 +2068,7 @@ BEGIN TRY
                                         ),
                                         (
                                                 'biru',
-                                                CASE WHEN cte.datatype_rule_name = '' THEN NULL ELSE 290 END,
+                                                CASE WHEN cte.datatype_rule_name = '' THEN NULL ELSE 230 END,
                                                 6,
                                                 CONCAT('EXEC sys.sp_bindrule @rulename = ', QUOTENAME(cte.datatype_rule_name), ', @objname = ''', REPLACE(CONCAT(cte.table_name, '.', CASE WHEN cte.new_column_name > '' THEN cte.new_column_name ELSE cte.column_name END), '''', ''''''), ''';')
                                         )
@@ -2161,6 +2148,7 @@ BEGIN TRY
                         END AS xml_collection_name
                 FROM    #configurations AS cfg
                 WHERE   cfg.is_computed = 0
+                        and cfg.datatype_name = 'nvarchar' and max_length = '4096'
         )
         INSERT  dbo.atac_queue
                 (
