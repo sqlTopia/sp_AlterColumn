@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_queue', 'U') IS NOT NULL
         DROP TABLE dbo.atac_queue;
 GO
-CREATE TABLE    atac_queue
+CREATE TABLE    dbo.atac_queue
                 (
                         statement_id INT NOT NULL CONSTRAINT df_atac_queue_statement_id DEFAULT (1) CONSTRAINT ck_atac_queue_statement_id CHECK (statement_id >= 1),
                         action_code CHAR(4) NOT NULL,
@@ -74,11 +74,11 @@ CREATE TABLE    atac_queue
                         CONSTRAINT pk_atac_queue PRIMARY KEY NONCLUSTERED (queue_id),
                 );
 GO
-CREATE NONCLUSTERED INDEX ix_atac_queue_status_code ON atac_queue (status_code, phase)
+CREATE NONCLUSTERED INDEX ix_atac_queue_status_code ON dbo.atac_queue (status_code, phase)
 INCLUDE(session_id, action_code, statement_start, sql_text, log_text, entity)
 WHERE status_code IN ('E', 'L', 'R', 'W');
 GO
-CREATE NONCLUSTERED INDEX ix_atac_queue_phase ON atac_queue (phase)
+CREATE NONCLUSTERED INDEX ix_atac_queue_phase ON dbo.atac_queue (phase)
 GO
-CREATE CLUSTERED INDEX ix_atac_queue_statement_id ON atac_queue (statement_id);
+CREATE CLUSTERED INDEX ix_atac_queue_statement_id ON dbo.atac_queue (statement_id);
 GO
