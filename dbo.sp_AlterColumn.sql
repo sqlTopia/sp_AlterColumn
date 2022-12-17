@@ -420,6 +420,7 @@ BEGIN TRY
         -- Fetch future payload
         RAISERROR('  Replenishing configurations...', 10, 1) WITH NOWAIT;
 
+-- DECLARE @database_collation_name VARCHAR(128) = NULL;
         INSERT          #future
                         (
                                 tag,
@@ -980,7 +981,7 @@ BEGIN TRY
                 Investigate unique indexes against new collation
         */
 
-        IF @execute_index_conflict_check = 1
+        IF @execute_index_conflict_check = 1 AND @database_collation_name IS NOT NULL
                 BEGIN
                         RAISERROR('Investigating collation conflicts at index level...', 10, 1, @curr_id, @stop_id) WITH NOWAIT;
 
@@ -1134,7 +1135,7 @@ BEGIN TRY
                 Check if inline conversion is possible
         */
 
-        IF @execute_inline_conversion_check = 1
+        IF @execute_inline_conversion_check = 1 AND @database_collation_name IS NOT NULL
                 BEGIN
                         RAISERROR('Checking if inline conversion is possible...', 10, 1, @curr_id, @stop_id) WITH NOWAIT;
 
@@ -1621,20 +1622,17 @@ BEGIN TRY
 
                 SELECT  fkc.constraint_object_id AS foreign_key_id
                 FROM    sys.foreign_key_columns AS fkc
-                WHERE   @database_collation_name IS NOT NULL
-                        AND     (
-                                        EXISTS(SELECT * FROM sys.computed_columns AS cc WHERE cc.object_id = fkc.referenced_object_id AND cc.column_id = fkc.referenced_column_id)
-                                        OR EXISTS(SELECT * FROM sys.computed_columns AS cc WHERE cc.object_id = fkc.parent_object_id AND cc.column_id = fkc.parent_column_id)
-                                )
-   
+                WHERE   EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.parent_object_id AND ixs.column_id = fkc.parent_column_id)
+                        OR EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.referenced_object_id AND ixs.column_id = fkc.referenced_column_id)
+
                 UNION
 
                 SELECT  fkc.constraint_object_id AS foreign_key_id
                 FROM    sys.foreign_key_columns AS fkc
                 WHERE   @database_collation_name IS NOT NULL
                         AND     (
-                                        EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.referenced_object_id AND ixs.column_id = fkc.referenced_column_id)
-                                        OR EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.parent_object_id AND ixs.column_id = fkc.parent_column_id)
+                                        EXISTS(SELECT * FROM sys.computed_columns AS cc WHERE cc.object_id = fkc.referenced_object_id AND cc.column_id = fkc.referenced_column_id)
+                                        OR EXISTS(SELECT * FROM sys.computed_columns AS cc WHERE cc.object_id = fkc.parent_object_id AND cc.column_id = fkc.parent_column_id)
                                 )
         )
         INSERT          #foreign_keys
@@ -2288,7 +2286,8 @@ BEGIN TRY
         )
         UPDATE  cte
         SET     cte.statement_id = cte.rnk
-        FROM    cte_sort AS cte;
+        FROM    cte_sort AS cte
+        WHERE   cte.statement_id <> cte.rnk;
 
         ALTER INDEX ALL ON dbo.atac_queue REBUILD WITH (FILLFACTOR = 100, DATA_COMPRESSION = PAGE);
 
