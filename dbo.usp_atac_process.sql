@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.usp_atac_process', 'P') IS NULL
         EXEC(N'CREATE PROCEDURE dbo.usp_atac_process AS');
 GO
-ALTER PROCEDURE dbo. usp_atac_process
+ALTER PROCEDURE dbo.usp_atac_process
 (
         @process_statements INT = 2147483647,
         @maximum_retry_count TINYINT = 100,
@@ -272,3 +272,4 @@ END TRY
 BEGIN CATCH
         THROW;
 END CATCH;
+GO
