@@ -542,30 +542,11 @@ BEGIN TRY
         INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
                                 AND fut.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
- 
+
         -- Get all connected columns to validate properly
-        WITH cte_graphs(graph_id, tag, collation_name)
-        AS (
-                SELECT  fut.graph_id,
-                        fut.tag,
-                        fut.collation_name
-                FROM    #future AS fut
-                WHERE   fut.node_count >= 2
-
-                UNION
-
-                SELECT          cur.graph_id,
-                                '' AS tag,
-                                @database_collation_name AS collation_name
-                FROM            #current AS cur
-                INNER JOIN      sys.computed_columns AS cc ON cc.object_id = cur.table_id
-                                        AND cc.column_id = cur.column_id
-                WHERE           @database_collation_name IS NOT NULL
-                                AND cur.node_count >= 2
-        )
         MERGE   #future AS tgt
         USING   (
-                        SELECT DISTINCT cte.tag,
+                        SELECT          fut.tag,
                                         cur.table_id,
                                         cur.table_name,
                                         cur.column_id,
@@ -573,12 +554,12 @@ BEGIN TRY
                                         cur.is_user_defined,
                                         cur.is_computed,
                                         cur.is_nullable,
-                                        cur.datatype_name,
-                                        cur.system_datatype_name,
-                                        cur.max_length,
-                                        cur.precision,
-                                        cur.scale,
-                                        cte.collation_name,
+                                        COALESCE(fut.datatype_name, cur.datatype_name) AS datatype_name,
+                                        COALESCE(fut.system_datatype_name, cur.system_datatype_name) AS system_datatype_name,
+                                        COALESCE(fut.max_length, cur.max_length) AS max_length,
+                                        COALESCE(fut.precision, cur.precision) AS precision,
+                                        COALESCE(fut.scale, cur.scale) AS scale,
+                                        COALESCE(fut.collation_name, cur.collation_name) AS collation_name,
                                         cur.xml_collection_name,
                                         cur.datatype_default_name,
                                         cur.datatype_rule_name,
@@ -586,7 +567,7 @@ BEGIN TRY
                                         cur.graph_id,
                                         cur.node_count
                         FROM            #current AS cur
-                        INNER JOIN      cte_graphs AS cte ON cte.graph_id = cur.graph_id
+                        INNER JOIN      #future AS fut ON fut.graph_id = cur.graph_id
                 ) AS src ON src.table_name = tgt.table_name
                         AND src.column_name = tgt.column_name
                         AND src.tag = tgt.tag
@@ -635,6 +616,87 @@ BEGIN TRY
                                         src.graph_id,
                                         src.node_count
                                 );
+
+        -- Get all computed columns when changing database collation
+        IF @database_collation_name IS NOT NULL
+                BEGIN
+                        MERGE   #future AS tgt
+                        USING   (
+                                        SELECT          COALESCE(fut.tag, '') AS tag,
+                                                        cur.table_id,
+                                                        cur.table_name,
+                                                        cur.column_id,
+                                                        cur.column_name,
+                                                        cur.is_user_defined,
+                                                        cur.is_computed,
+                                                        cur.is_nullable,
+                                                        cur.datatype_name,
+                                                        cur.system_datatype_name,
+                                                        cur.max_length,
+                                                        cur.precision,
+                                                        cur.scale,
+                                                        @database_collation_name AS collation_name,
+                                                        cur.xml_collection_name,
+                                                        cur.datatype_default_name,
+                                                        cur.datatype_rule_name,
+                                                        1 AS is_replenished,
+                                                        cur.graph_id,
+                                                        cur.node_count
+                                        FROM            #current AS cur
+                                        INNER JOIN      sys.computed_columns AS cc ON cc.object_id = cur.table_id
+                                                                AND cc.column_id = cur.column_id
+                                        LEFT JOIN       #future AS fut ON fut.graph_id = cur.table_id
+                                                                AND fut.column_id = cur.column_id
+                                        WHERE           cur.node_count >= 2
+                                ) AS src ON src.table_name = tgt.table_name
+                                        AND src.column_name = tgt.column_name
+                                        AND src.tag = tgt.tag
+                        WHEN    NOT MATCHED BY TARGET
+                                THEN    INSERT  (
+                                                        tag,
+                                                        table_id,
+                                                        table_name,
+                                                        column_id,
+                                                        column_name,
+                                                        is_user_defined,
+                                                        is_computed,
+                                                        is_nullable,
+                                                        datatype_name,
+                                                        system_datatype_name,
+                                                        max_length,
+                                                        precision,
+                                                        scale,
+                                                        collation_name,
+                                                        xml_collection_name,
+                                                        datatype_default_name,
+                                                        datatype_rule_name,
+                                                        is_replenished,
+                                                        graph_id,
+                                                        node_count
+                                                )
+                                        VALUES  (
+                                                        src.tag,
+                                                        src.table_id,
+                                                        src.table_name,
+                                                        src.column_id,
+                                                        src.column_name,
+                                                        src.is_user_defined,
+                                                        src.is_computed,
+                                                        src.is_nullable,
+                                                        src.datatype_name,
+                                                        src.system_datatype_name,
+                                                        src.max_length,
+                                                        src.precision,
+                                                        src.scale,
+                                                        src.collation_name,
+                                                        src.xml_collection_name,
+                                                        src.datatype_default_name,
+                                                        src.datatype_rule_name,
+                                                        src.is_replenished,
+                                                        src.graph_id,
+                                                        src.node_count
+                                                );
+                END;
 
         RAISERROR('  Checking configurations...', 10, 1) WITH NOWAIT;
 
@@ -1241,8 +1303,8 @@ BEGIN TRY
                                         ),
                                         (
                                                 'endt',
-                                                410,
-                                                9,
+                                                420,
+                                                14,
                                                 CONCAT('ENABLE TRIGGER ', QUOTENAME(trg.name COLLATE DATABASE_DEFAULT), ' ON DATABASE;')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1521,8 +1583,8 @@ BEGIN TRY
         FROM            cte_indexes AS cte
         CROSS APPLY     (
                                 SELECT  'crix' AS action_code,
-                                        320 AS sort_order,
-                                        6 AS phase,
+                                        330 AS sort_order,
+                                        9 AS phase,
                                         CASE
                                                 -- Nonclustered hash index
                                                 WHEN cte.index_type_major = 7 AND cte.is_unique = 1 THEN CONCAT('ALTER TABLE ', cte.table_name, ' ADD INDEX ', cte.index_name, ' UNIQUE NONCLUSTERED HASH (', cte.key_columns, ') WITH (', cte.bucket_count, ');')
@@ -1555,7 +1617,7 @@ BEGIN TRY
 
                                 SELECT  'drix',
                                         70 AS sort_order,
-                                        1 AS phase,
+                                        3 AS phase,
                                         CASE
                                                 WHEN cte.is_memory_optimized = 1 THEN CONCAT('ALTER TABLE ', cte.table_name, ' DROP INDEX ', cte.index_name, ');')
                                                 WHEN 1 IN (cte.is_primary_key, cte.is_unique_constraint) THEN CONCAT('ALTER TABLE ', cte.table_name, ' DROP CONSTRAINT ', cte.index_name, ' WITH (', cte.online, ');')
@@ -1601,8 +1663,8 @@ BEGIN TRY
                                         ),
                                         (
                                                 'entg',
-                                                370,
-                                                6,
+                                                400,
+                                                13,
                                                 CONCAT('ALTER TABLE ', wrk.table_name, ' ENABLE TRIGGER ', QUOTENAME(trg.name COLLATE DATABASE_DEFAULT), ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1710,13 +1772,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'drfk',
                                                 50,
-                                                1,
+                                                2,
                                                 CONCAT('ALTER TABLE ', fk.parent_table_name, ' DROP CONSTRAINT ', fk.name, ';')
                                         ),
                                         (
                                                 'crfk',
-                                                340,
-                                                6,
+                                                350,
+                                                10,
                                                 CONCAT('ALTER TABLE ', fk.parent_table_name, ' WITH CHECK ADD CONSTRAINT ', fk.name, ' FOREIGN KEY (', fk.parent_columns, ') REFERENCES ', fk.referenced_table_name, ' (', fk.referenced_columns, ') ', fk.delete_action, ' ', fk.update_action, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1749,13 +1811,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'drvw',
                                                 80,
-                                                1,
+                                                3,
                                                 CONCAT('DROP VIEW ', QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(vw.name COLLATE DATABASE_DEFAULT), ';')
                                         ),
                                         (
                                                 'crvw',
-                                                310,
-                                                6,
+                                                320,
+                                                9,
                                                 CONCAT(sqm.definition COLLATE DATABASE_DEFAULT, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1800,13 +1862,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'drfn',
                                                 90,
-                                                1,
+                                                3,
                                                 CONCAT('DROP FUNCTION ', QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(obj.name COLLATE DATABASE_DEFAULT), ';')
                                         ),
                                         (
                                                 'crfn',
-                                                300,
-                                                6,
+                                                310,
+                                                9,
                                                 CONCAT(sqm.definition COLLATE DATABASE_DEFAULT, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1858,13 +1920,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'drck',
                                                 110,
-                                                1,
+                                                3,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' DROP CONSTRAINT ', cte.check_constraint_name, ';')
                                         ),
                                         (
                                                 'crck',
-                                                280,
-                                                6,
+                                                290,
+                                                9,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' WITH CHECK ADD CONSTRAINT ', cte.check_constraint_name, ' CHECK ', cte.check_definition, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1914,13 +1976,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'drdk',
                                                 120,
-                                                1,
+                                                3,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' DROP CONSTRAINT ', cte.default_constraint_name, ';')
                                         ),
                                         (
                                                 'crdk',
-                                                270,
-                                                6,
+                                                280,
+                                                9,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' ADD CONSTRAINT ', cte.default_constraint_name, ' DEFAULT ', cte.default_definition, ' FOR ', cte.column_name, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -1971,13 +2033,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'drcc',
                                                 130,
-                                                1,
+                                                3,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' DROP COLUMN ', cte.column_name, ';')
                                         ),
                                         (
                                                 'crcc',
-                                                260,
-                                                6,
+                                                270,
+                                                9,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' ADD ', cte.column_name, ' AS ', cte.computed_definition, CASE WHEN cte.is_persisted = 1 THEN ' PERSISTED;' ELSE ';' END)
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -2025,13 +2087,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'undf',
                                                 140,
-                                                1,
+                                                3,
                                                 CONCAT('EXEC sys.sp_unbindefault @objname = ''', REPLACE(CONCAT(cte.table_name, '.', cte.column_name), '''', ''''''), ''';')
                                         ),
                                         (
                                                 'bidf',
-                                                CASE WHEN cte.datatype_default_name = '' THEN NULL ELSE 250 END,
-                                                6,
+                                                CASE WHEN cte.datatype_default_name = '' THEN NULL ELSE 260 END,
+                                                9,
                                                 CONCAT('EXEC sys.sp_bindefault @defname = ', QUOTENAME(cte.datatype_default_name, ''''), ', @objname = ''', REPLACE(CONCAT(cte.table_name, '.', CASE WHEN cte.new_column_name > '' THEN QUOTENAME(cte.new_column_name) ELSE cte.column_name END), '''', ''''''), ''';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -2080,13 +2142,13 @@ BEGIN TRY
                                 VALUES  (
                                                 'unru',
                                                 160,
-                                                1,
+                                                3,
                                                 CONCAT('EXEC sys.sp_unbindrule @objname = ''', REPLACE(CONCAT(cte.table_name, '.', cte.column_name), '''', ''''''), ''';')
                                         ),
                                         (
                                                 'biru',
-                                                CASE WHEN cte.datatype_rule_name = '' THEN NULL ELSE 230 END,
-                                                6,
+                                                CASE WHEN cte.datatype_rule_name = '' THEN NULL ELSE 240 END,
+                                                9,
                                                 CONCAT('EXEC sys.sp_bindrule @rulename = ', QUOTENAME(cte.datatype_rule_name), ', @objname = ''', REPLACE(CONCAT(cte.table_name, '.', CASE WHEN cte.new_column_name > '' THEN cte.new_column_name ELSE cte.column_name END), '''', ''''''), ''';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
@@ -2124,8 +2186,8 @@ BEGIN TRY
                                         )
                         SELECT          'aldb' AS action_code,
                                         'L' AS status_code,
-                                        180 AS sort_order,
-                                        2 AS phase,
+                                        190 AS sort_order,
+                                        5 AS phase,
                                         DB_NAME() AS entity,
                                         cte.sql_text
                         FROM            cte_statements AS cte
@@ -2177,9 +2239,9 @@ BEGIN TRY
                 )
         SELECT  'alco' AS action_code,
                 'L' AS status_code,
-                190 AS sort_order,
+                200 AS sort_order,
                 cte.entity,
-                3 AS phase,
+                6 AS phase,
                 CONCAT('ALTER TABLE ', cte.table_name, ' ALTER COLUMN ', cte.column_name, ' ', cte.datatype_name, cte.max_length, cte.precision_and_scale, cte.collation_name, cte.xml_collection_name, cte.is_nullable, ';') AS sql_text
         FROM    cte_column AS cte
         OPTION  (RECOMPILE);
@@ -2207,9 +2269,9 @@ BEGIN TRY
                 )
         SELECT  'reco' AS action_code,
                 'L' AS status_code,
-                100 sort_order,
+                210 sort_order,
                 cte.entity,
-                4 AS phase,
+                7 AS phase,
                 CONCAT('EXEC sys.sp_rename @objname = ''', REPLACE(CONCAT(cte.table_name, '.', cte.column_name), '''', ''''''), ''', @newname = ', cte.new_column_name, ', @objtype = ''COLUM'';') AS sql_text
         FROM    cte_column AS cte
         OPTION  (RECOMPILE);
@@ -2230,9 +2292,9 @@ BEGIN TRY
                                         )
                         SELECT DISTINCT 'cltb' AS action_code,
                                         'L' AS status_code,
-                                        380 AS sort_order,
+                                        370 AS sort_order,
                                         cfg.table_name AS entity,
-                                        7 AS phase,
+                                        11 AS phase,
                                         CONCAT('DBCC CLEANTABLE(', QUOTENAME(DB_NAME()), ', ''', REPLACE(cfg.table_name, '''', ''''''), ''');') AS sql_text
                         FROM            #configurations AS cfg
                         INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
@@ -2258,9 +2320,9 @@ BEGIN TRY
                                         )
                         SELECT          'remo' AS action_code,
                                         'L' AS status_code,
-                                        390 AS sort_order,
+                                        380 AS sort_order,
                                         CONCAT(SCHEMA_NAME(obj.schema_id) COLLATE DATABASE_DEFAULT, '.', obj.name COLLATE DATABASE_DEFAULT) AS entity,
-                                        7 AS phase,
+                                        12 AS phase,
                                         CONCAT('EXEC sys.sp_refreshsqlmodule @name = ''', REPLACE(CONCAT(QUOTENAME(OBJECT_SCHEMA_NAME(dep.object_id) COLLATE DATABASE_DEFAULT), '.', QUOTENAME(OBJECT_NAME(dep.object_id) COLLATE DATABASE_DEFAULT)), '''', ''''''), ''';') AS sql_text
                         FROM            #dependencies AS dep
                         INNER JOIN      sys.objects AS obj ON obj.object_id = dep.object_id
@@ -2326,15 +2388,6 @@ BEGIN TRY
                                 END;
                 END;
 
-        /*
-                Release the queue
-        */
-
-        UPDATE  aqe
-        SET     aqe.status_code = 'R'
-        FROM    dbo.atac_queue AS aqe
-        WHERE   aqe.statement_id = 1;
-
         -- If viewing statements only
         IF @verbose = 1
                 BEGIN
@@ -2348,6 +2401,15 @@ BEGIN TRY
                         RETURN;
                 END;
 
+        /*
+                Release the queue
+        */
+
+        UPDATE  aqe
+        SET     aqe.status_code = 'R'
+        FROM    dbo.atac_queue AS aqe
+        WHERE   aqe.statement_id = 1;
+
         -- Start SQL Agent jobs
         IF @use_sql_agent = 1
                 BEGIN
@@ -2356,7 +2418,7 @@ BEGIN TRY
                         WHILE @curr_id <= @number_of_processes
                                 BEGIN
                                         SET     @sql = CONCAT('EXEC msdb.dbo.sp_start_job @job_name = ''ATAC - Process ', @curr_id, ' of ', @number_of_processes, ''';');
-                                        PRINT @sql;
+
                                         EXEC    (@sql);
 
                                         SET     @curr_id += 1;
