@@ -21,9 +21,13 @@ DECLARE @statement_id INT,
         @action_code CHAR(4),
         @current_retry_count TINYINT = 0,
         @error_number INT,
-        @delay CHAR(12) = @wait_time;
+        @start_time DATETIME2(3),
+        @end_time DATETIME2(3),
+        @elapsed INT,
+        @delay CHAR(12) = @wait_time,
+        @is_main_task_done BIT;
 
--- Elevated permissions
+-- Elevate permissions
 IF HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER') IS NULL OR HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'ALTER') = 0
         BEGIN
                 RAISERROR('You are not allowed to alter database.', 18, 1);
@@ -64,19 +68,21 @@ DECLARE @process TABLE
         );
 
 BEGIN TRY
-        -- Get current_phase
+        -- Get current phase
         SELECT TOP(1)   @current_phase = aqe.phase
-        FROM            dbo.atac_queue AS aqe WITH (READPAST)
+        FROM            dbo.atac_queue AS aqe
         WHERE           aqe.status_code = 'R'
-        ORDER BY        aqe.statement_id;
+        ORDER BY        aqe.statement_id
+        OPTION          (MAXDOP 1);
 
-        -- Get current max_phase
+        -- Get current maximum phase
         SELECT TOP(1)   @max_phase = aqe.phase
-        FROM            dbo.atac_queue AS aqe WITH (READPAST)
-        ORDER BY        aqe.phase DESC;
+        FROM            dbo.atac_queue AS aqe
+        ORDER BY        aqe.phase DESC
+        OPTION          (MAXDOP 1);
 
         -- Keep iterating as long as there are statements to be executed
-        WHILE EXISTS(SELECT * FROM dbo.atac_queue AS aqe WITH (READPAST) WHERE aqe.status_code IN ('L', 'R', 'W'))
+        WHILE EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.status_code IN ('L', 'R'))
                 BEGIN
                         -- Get next statement ordered by phase and statement_id
                         WHILE @current_phase <= @max_phase
@@ -95,7 +101,7 @@ BEGIN TRY
                                                                 aqe.statement_end,
                                                                 aqe.sql_text,
                                                                 aqe.log_text
-                                                FROM            dbo.atac_queue AS aqe WITH (READPAST)
+                                                FROM            dbo.atac_queue AS aqe
                                                 WHERE           aqe.status_code = 'R'
                                                                 AND aqe.phase = @current_phase
                                                 ORDER BY        aqe.statement_id
@@ -117,7 +123,8 @@ BEGIN TRY
                                                         action_code,
                                                         sql_text
                                                 )
-                                        FROM    cte_queue AS cte;
+                                        FROM    cte_queue AS cte
+                                        OPTION  (MAXDOP 1);
 
                                         -- Process statement if found
                                         IF @@ROWCOUNT >= 1
@@ -132,18 +139,39 @@ BEGIN TRY
                                                         -- Execute statement
                                                         WHILE @current_retry_count <= @maximum_retry_count
                                                                 BEGIN
-                                                                        SET     @error_number = 0;
+                                                                        SELECT  @error_number = 0,
+                                                                                @is_main_task_done = 0;
 
                                                                         BEGIN TRY
                                                                                 -- Excute current statement
-                                                                                EXEC    (@sql_text);
+                                                                                RAISERROR('ABARUN %s', 10, 1, @sql_text) WITH NOWAIT;
+
+                                                                                IF @is_main_task_done = 0
+                                                                                        BEGIN
+                                                                                                SET     @start_time = SYSDATETIME();
+
+                                                                                                EXEC    (@sql_text);
+
+                                                                                                SET     @is_main_task_done = 1;
+
+                                                                                                SET     @end_time = SYSDATETIME();
+
+                                                                                                SET     @elapsed = DATEDIFF(SECOND, @start_time, @end_time);
+
+                                                                                                IF @elapsed >= 60
+                                                                                                        BEGIN
+                                                                                                                RAISERROR(N'Msg 0, Level 8, Elapsed: %i seconds', 10, 1, @elapsed) WITH NOWAIT;
+                                                                                                        END;
+                                                                                        END;
 
                                                                                 -- Update processed and end time
                                                                                 UPDATE  aqe
                                                                                 SET     aqe.status_code = 'F',
-                                                                                        aqe.statement_end = SYSDATETIME()
-                                                                                FROM    dbo.atac_queue AS aqe WITH (TABLOCK)
-                                                                                WHERE   aqe.statement_id = @statement_id;
+                                                                                        aqe.statement_end = @end_time,
+                                                                                        aqe.log_text = NULL
+                                                                                FROM    dbo.atac_queue AS aqe
+                                                                                WHERE   aqe.statement_id = @statement_id
+                                                                                OPTION  (MAXDOP 1);
 
                                                                                 -- Decrease execution counter
                                                                                 SET     @process_statements -= 1;
@@ -157,17 +185,19 @@ BEGIN TRY
                                                                                 UPDATE  aqe 
                                                                                 SET     aqe.status_code = 'E',
                                                                                         aqe.log_text = CONCAT('(', ERROR_NUMBER(), ') ', ERROR_MESSAGE())
-                                                                                FROM    dbo.atac_queue AS aqe WITH (TABLOCK)
-                                                                                WHERE   aqe.statement_id = @statement_id;
+                                                                                FROM    dbo.atac_queue AS aqe
+                                                                                WHERE   aqe.statement_id = @statement_id
+                                                                                OPTION  (MAXDOP 1);
 
                                                                                 IF @action_code NOT IN ('cltb', 'remo')
                                                                                         BEGIN
                                                                                                 UPDATE  aqe
                                                                                                 SET     aqe.status_code = 'E',
                                                                                                         aqe.log_text = CONCAT('An earlier execution for same entity went wrong (statement #', @statement_id, ').')
-                                                                                                FROM    dbo.atac_queue AS aqe WITH (TABLOCK)
+                                                                                                FROM    dbo.atac_queue AS aqe
                                                                                                 WHERE   aqe.statement_id > @statement_id
-                                                                                                        AND aqe.entity = @entity;
+                                                                                                        AND aqe.entity = @entity
+                                                                                                OPTION  (MAXDOP 1);
                                                                                         END;
                                                                         END CATCH;
 
@@ -179,18 +209,19 @@ BEGIN TRY
                                                                                 SET     @current_retry_count += 1;
                                                                         ELSE IF @error_number = 1222                    -- Another transaction held a lock on a required resource longer than this query could wait for it.
                                                                                 SET     @current_retry_count += 1;
-                                                                        ELSE IF @error_number > 0
+                                                                        ELSE
                                                                                 BEGIN
-                                                                                        RAISERROR('A new complication has occured. Please report error number to sp_AlterColumn developer.', 10, 1);
+                                                                                        RAISERROR('Msg 0, Level 16, A new complication has occured. Please report error number to sp_AlterColumn developer.', 10, 1);
 
                                                                                         BREAK;
                                                                                 END;
 
-                                                                        RAISERROR('Retry attempt %d.', 10, 1, @current_retry_count) WITH NOWAIT;
+                                                                        -- Display information about retry attempt
+                                                                        RAISERROR('Msg 0, Level 16, Retry attempt %d.', 10, 1, @current_retry_count) WITH NOWAIT;
 
                                                                         IF @current_retry_count > @maximum_retry_count
                                                                                 BEGIN
-                                                                                        RAISERROR('Maximum retry count %d is reached.', 18, 1, @maximum_retry_count) WITH NOWAIT;
+                                                                                        RAISERROR('Msg 0, Level 16, Maximum retry count %d is reached.', 18, 1, @maximum_retry_count) WITH NOWAIT;
 
                                                                                         RETURN  -2000;
                                                                                 END;
@@ -206,35 +237,33 @@ BEGIN TRY
                                                 END;
 
                                         -- Check if available statements at current phase
-                                        IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WITH (READPAST) WHERE aqe.phase = @current_phase AND aqe.status_code IN ('L', 'R', 'W'))
+                                        IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.phase = @current_phase AND aqe.status_code IN ('L', 'R', 'W'))
                                                 BEGIN
                                                         -- Unlock next statement for specific entity
                                                         WITH cte_phase
                                                         AS (
                                                                 SELECT TOP(1)   aqe.status_code
-                                                                FROM            dbo.atac_queue AS aqe WITH (TABLOCK)
+                                                                FROM            dbo.atac_queue AS aqe
                                                                 WHERE           aqe.phase = @current_phase
                                                                                 AND aqe.entity = @entity
-                                                                                AND aqe.status_code IN ('L', 'R', 'W')
+                                                                                AND aqe.status_code IN ('L', 'R')
                                                                 ORDER BY        aqe.statement_id
                                                         )
                                                         UPDATE  cte
                                                         SET     cte.status_code = 'R'
                                                         FROM    cte_phase AS cte
-                                                        WHERE   cte.status_code = 'L';
+                                                        WHERE   cte.status_code = 'L'
+                                                        OPTION  (MAXDOP 1);
+
+                                                        IF @@ROWCOUNT = 0
+                                                                BEGIN
+                                                                        WAITFOR DELAY   @delay;
+                                                                END;
                                                 END;
                                         ELSE
                                                 BEGIN
-                                                        -- Exit if no more phases
-                                                        IF @current_phase > @max_phase
-                                                                BEGIN
-                                                                        SET     @process_statements = 0;
-
-                                                                        BREAK;
-                                                                END;
-
                                                         -- Check for errors in current phase
-                                                        IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WITH (READPAST) WHERE aqe.phase = @current_phase AND aqe.status_code = 'E' AND aqe.action_code <> 'remo')
+                                                        IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.phase = @current_phase AND aqe.status_code = 'E' AND aqe.action_code <> 'remo')
                                                                 BEGIN
                                                                         -- Not allowed to continue with next phase when errors exist in current
                                                                         SET     @process_statements = 0;
@@ -244,6 +273,14 @@ BEGIN TRY
 
                                                         -- Move on to next phase
                                                         SET     @current_phase += 1;
+
+                                                        -- Exit if no more phases
+                                                        IF @current_phase > @max_phase
+                                                                BEGIN
+                                                                        SET     @process_statements = 0;
+
+                                                                        BREAK;
+                                                                END;
 
                                                         -- Unlock first statement for each entity
                                                         WITH cte_phase
@@ -256,9 +293,10 @@ BEGIN TRY
                                                         )
                                                         UPDATE  cte
                                                         SET     cte.status_code = 'R'
-                                                        FROM    cte_phase AS cte WITH (TABLOCK)
+                                                        FROM    cte_phase AS cte
                                                         WHERE   cte.rnk = 1
-                                                                AND cte.status_code = 'L';
+                                                                AND cte.status_code = 'L'
+                                                        OPTION  (MAXDOP 1);
                                                 END;
                                 END;
 
