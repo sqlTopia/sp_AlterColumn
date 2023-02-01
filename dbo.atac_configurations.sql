@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_configurations', 'U') IS NOT NULL
         DROP TABLE dbo.atac_configurations;
 GO
-CREATE TABLE    dbo.atac_configurations
+CREATE TABLE    atac_configurations
                 (
                         tag VARCHAR(36) NOT NULL CONSTRAINT df_atac_configurations_tag DEFAULT (''),
                         table_name VARCHAR(257) NOT NULL CONSTRAINT ck_atac_configurations_table_name CHECK (table_name > ''),
