@@ -1,7 +1,7 @@
 IF OBJECT_ID(N'dbo.atac_queue', 'U') IS NOT NULL
         DROP TABLE dbo.atac_queue;
 GO
-CREATE TABLE    dbo.atac_queue
+CREATE TABLE    atac_queue
                 (
                         statement_id INT NOT NULL CONSTRAINT df_atac_queue_statement_id DEFAULT (1) CONSTRAINT ck_atac_queue_statement_id CHECK (statement_id >= 1),
                         action_code CHAR(4) NOT NULL,
@@ -72,27 +72,22 @@ CREATE TABLE    dbo.atac_queue
                                                                                                 OR action_code = 'crvw' AND sort_order = 320 AND phase = 9      -- Create view
                                                                                                 OR action_code = 'crix' AND sort_order = 330 AND phase = 9      -- Create index
                                                                                                 OR action_code = 'enix' AND sort_order = 340 AND phase = 9      -- Enable index
-                                                                                                OR action_code = 'crfk' AND sort_order = 350 AND phase = 9      -- Create foreign key
-                                                                                                OR action_code = 'enfk' AND sort_order = 360 AND phase = 9      -- Enable foreign key
 
-                                                                                                OR action_code = 'cltb' AND sort_order = 370 AND phase = 10     -- Clean tables
+                                                                                                OR action_code = 'crfk' AND sort_order = 350 AND phase = 10      -- Create foreign key
+                                                                                                OR action_code = 'enfk' AND sort_order = 360 AND phase = 10      -- Enable foreign key
 
-                                                                                                OR action_code = 'remo' AND sort_order = 380 AND phase = 11     -- Refresh modules
+                                                                                                OR action_code = 'cltb' AND sort_order = 370 AND phase = 11     -- Clean tables
 
-                                                                                                OR action_code = 'crtg' AND sort_order = 390 AND phase = 12     -- Create table triggers
-                                                                                                OR action_code = 'entg' AND sort_order = 400 AND phase = 12     -- Enable table triggers
+                                                                                                OR action_code = 'remo' AND sort_order = 380 AND phase = 12     -- Refresh modules
 
-                                                                                                OR action_code = 'crdt' AND sort_order = 410 AND phase = 13     -- Create database triggers
-                                                                                                OR action_code = 'endt' AND sort_order = 420 AND phase = 13     -- Enable database triggers
+                                                                                                OR action_code = 'crtg' AND sort_order = 390 AND phase = 13     -- Create table triggers
+                                                                                                OR action_code = 'entg' AND sort_order = 400 AND phase = 13     -- Enable table triggers
+
+                                                                                                OR action_code = 'crdt' AND sort_order = 410 AND phase = 14     -- Create database triggers
+                                                                                                OR action_code = 'endt' AND sort_order = 420 AND phase = 14     -- Enable database triggers
                                                                                         ),
                         CONSTRAINT pk_atac_queue PRIMARY KEY NONCLUSTERED (queue_id),
                 );
-GO
-CREATE NONCLUSTERED INDEX ix_atac_queue_status_code ON dbo.atac_queue (status_code, phase)
-INCLUDE(session_id, action_code, statement_start, statement_end, sql_text, log_text, entity)
-WHERE status_code IN ('E', 'L', 'R', 'W');
-GO
-CREATE NONCLUSTERED INDEX ix_atac_queue_phase ON dbo.atac_queue (phase)
 GO
 CREATE CLUSTERED INDEX ix_atac_queue_statement_id ON dbo.atac_queue (statement_id);
 GO
