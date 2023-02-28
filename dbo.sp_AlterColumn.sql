@@ -131,6 +131,7 @@ CREATE TABLE    #foreign_keys
                         parent_table_name VARCHAR(261) COLLATE DATABASE_DEFAULT NOT NULL,
                         entity VARCHAR(257) COLLATE DATABASE_DEFAULT NOT NULL,
                         parent_columns VARCHAR(MAX) COLLATE DATABASE_DEFAULT NULL,
+                        page_count BIGINT NOT NULL,
                         PRIMARY KEY CLUSTERED (id)
                 );
 
@@ -153,6 +154,13 @@ CREATE TABLE    #index_columns
                         is_descending_key BIT NOT NULL,
                         index_column_id INT NOT NULL,
                         PRIMARY KEY CLUSTERED (table_id, index_id, column_id)
+                );
+
+-- These are the page counts
+CREATE TABLE    #page_counts
+                (
+                        object_id INT NOT NULL,
+                        page_count DECIMAL(19, 0) NOT NULL
                 );
 
 -- These are the indexes involved with possible collation conflict
@@ -309,6 +317,17 @@ BEGIN TRY
                 Validate configurations
         */
         RAISERROR('Validating configurations...', 10, 1) WITH NOWAIT;
+
+        INSERT          #page_counts
+                        (
+                                object_id,
+                                page_count
+                        )
+        SELECT          ps.object_id,
+                        SUM(ps.reserved_page_count) AS page_count
+        FROM            sys.dm_db_partition_stats AS ps
+        GROUP BY        ps.object_id
+        HAVING          SUM(ps.reserved_page_count) >= 1;
 
         RAISERROR('  Calculating graphs...', 10, 1) WITH NOWAIT;
 
@@ -542,11 +561,30 @@ BEGIN TRY
         INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
                                 AND fut.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
-
+ 
         -- Get all connected columns to validate properly
+        WITH cte_graphs(graph_id, tag, collation_name)
+        AS (
+                SELECT  fut.graph_id,
+                        fut.tag,
+                        fut.collation_name
+                FROM    #future AS fut
+                WHERE   fut.node_count >= 2
+
+                UNION
+
+                SELECT          cur.graph_id,
+                                '' AS tag,
+                                @database_collation_name AS collation_name
+                FROM            #current AS cur
+                INNER JOIN      sys.computed_columns AS cc ON cc.object_id = cur.table_id
+                                        AND cc.column_id = cur.column_id
+                WHERE           @database_collation_name IS NOT NULL
+                                AND cur.node_count >= 2
+        )
         MERGE   #future AS tgt
         USING   (
-                        SELECT          fut.tag,
+                        SELECT DISTINCT cte.tag,
                                         cur.table_id,
                                         cur.table_name,
                                         cur.column_id,
@@ -554,12 +592,12 @@ BEGIN TRY
                                         cur.is_user_defined,
                                         cur.is_computed,
                                         cur.is_nullable,
-                                        COALESCE(fut.datatype_name, cur.datatype_name) AS datatype_name,
-                                        COALESCE(fut.system_datatype_name, cur.system_datatype_name) AS system_datatype_name,
-                                        COALESCE(fut.max_length, cur.max_length) AS max_length,
-                                        COALESCE(fut.precision, cur.precision) AS precision,
-                                        COALESCE(fut.scale, cur.scale) AS scale,
-                                        COALESCE(fut.collation_name, cur.collation_name) AS collation_name,
+                                        cur.datatype_name,
+                                        cur.system_datatype_name,
+                                        cur.max_length,
+                                        cur.precision,
+                                        cur.scale,
+                                        cte.collation_name,
                                         cur.xml_collection_name,
                                         cur.datatype_default_name,
                                         cur.datatype_rule_name,
@@ -567,7 +605,7 @@ BEGIN TRY
                                         cur.graph_id,
                                         cur.node_count
                         FROM            #current AS cur
-                        INNER JOIN      #future AS fut ON fut.graph_id = cur.graph_id
+                        INNER JOIN      cte_graphs AS cte ON cte.graph_id = cur.graph_id
                 ) AS src ON src.table_name = tgt.table_name
                         AND src.column_name = tgt.column_name
                         AND src.tag = tgt.tag
@@ -616,87 +654,6 @@ BEGIN TRY
                                         src.graph_id,
                                         src.node_count
                                 );
-
-        -- Get all computed columns when changing database collation
-        IF @database_collation_name IS NOT NULL
-                BEGIN
-                        MERGE   #future AS tgt
-                        USING   (
-                                        SELECT          COALESCE(fut.tag, '') AS tag,
-                                                        cur.table_id,
-                                                        cur.table_name,
-                                                        cur.column_id,
-                                                        cur.column_name,
-                                                        cur.is_user_defined,
-                                                        cur.is_computed,
-                                                        cur.is_nullable,
-                                                        cur.datatype_name,
-                                                        cur.system_datatype_name,
-                                                        cur.max_length,
-                                                        cur.precision,
-                                                        cur.scale,
-                                                        @database_collation_name AS collation_name,
-                                                        cur.xml_collection_name,
-                                                        cur.datatype_default_name,
-                                                        cur.datatype_rule_name,
-                                                        1 AS is_replenished,
-                                                        cur.graph_id,
-                                                        cur.node_count
-                                        FROM            #current AS cur
-                                        INNER JOIN      sys.computed_columns AS cc ON cc.object_id = cur.table_id
-                                                                AND cc.column_id = cur.column_id
-                                        LEFT JOIN       #future AS fut ON fut.graph_id = cur.table_id
-                                                                AND fut.column_id = cur.column_id
-                                        WHERE           cur.node_count >= 2
-                                ) AS src ON src.table_name = tgt.table_name
-                                        AND src.column_name = tgt.column_name
-                                        AND src.tag = tgt.tag
-                        WHEN    NOT MATCHED BY TARGET
-                                THEN    INSERT  (
-                                                        tag,
-                                                        table_id,
-                                                        table_name,
-                                                        column_id,
-                                                        column_name,
-                                                        is_user_defined,
-                                                        is_computed,
-                                                        is_nullable,
-                                                        datatype_name,
-                                                        system_datatype_name,
-                                                        max_length,
-                                                        precision,
-                                                        scale,
-                                                        collation_name,
-                                                        xml_collection_name,
-                                                        datatype_default_name,
-                                                        datatype_rule_name,
-                                                        is_replenished,
-                                                        graph_id,
-                                                        node_count
-                                                )
-                                        VALUES  (
-                                                        src.tag,
-                                                        src.table_id,
-                                                        src.table_name,
-                                                        src.column_id,
-                                                        src.column_name,
-                                                        src.is_user_defined,
-                                                        src.is_computed,
-                                                        src.is_nullable,
-                                                        src.datatype_name,
-                                                        src.system_datatype_name,
-                                                        src.max_length,
-                                                        src.precision,
-                                                        src.scale,
-                                                        src.collation_name,
-                                                        src.xml_collection_name,
-                                                        src.datatype_default_name,
-                                                        src.datatype_rule_name,
-                                                        src.is_replenished,
-                                                        src.graph_id,
-                                                        src.node_count
-                                                );
-                END;
 
         RAISERROR('  Checking configurations...', 10, 1) WITH NOWAIT;
 
@@ -1303,7 +1260,7 @@ BEGIN TRY
                                         ),
                                         (
                                                 'endt',
-                                                420,
+                                                440,
                                                 14,
                                                 CONCAT('ENABLE TRIGGER ', QUOTENAME(trg.name COLLATE DATABASE_DEFAULT), ' ON DATABASE;')
                                         )
@@ -1323,6 +1280,7 @@ BEGIN TRY
                                 ind.name AS index_name
                 FROM            sys.indexes AS ind
                 INNER JOIN      sys.index_columns AS icl ON icl.object_id = ind.object_id
+                                        AND icl.index_id = ind.index_id
                 INNER JOIN      #configurations AS cfg ON cfg.table_id = icl.object_id
                                         AND cfg.column_id = icl.column_id
 
@@ -1344,6 +1302,7 @@ BEGIN TRY
                                 ind.name AS index_name
                 FROM            sys.indexes AS ind
                 INNER JOIN      sys.index_columns AS icl ON icl.object_id = ind.object_id
+                                        AND icl.index_id = ind.index_id
                 INNER JOIN      sys.computed_columns AS cc ON cc.object_id = icl.object_id
                                         AND cc.column_id = icl.column_id
                 WHERE           @database_collation_name IS NOT NULL
@@ -1465,7 +1424,7 @@ BEGIN TRY
                                         ELSE 'ALLOW_PAGE_LOCKS = OFF'
                                 END AS allow_page_locks,
                                 CONCAT('FILLFACTOR = ', COALESCE(cfg.fill_factor, 100)) AS fill_factor,
-                                pfs.page_count,
+                                COALESCE(pc.page_count, 0) AS page_count,
                                 CASE
                                         WHEN six.spatial_index_type = 1 THEN CONCAT('BOUNDING_BOX = (', sit.bounding_box_xmin, ', ', sit.bounding_box_ymin, ', ', sit.bounding_box_xmax, ', ', sit.bounding_box_ymax, ')')
                                         ELSE ''
@@ -1482,12 +1441,6 @@ BEGIN TRY
                 INNER JOIN      sys.indexes AS ind ON ind.object_id = wrk.table_id
                                         AND ind.index_id = wrk.index_id
                 INNER JOIN      sys.tables AS tbl ON tbl.object_id = wrk.table_id
-                OUTER APPLY     (
-                                        SELECT  SUM(ps.used_page_count) AS page_count
-                                        FROM    sys.dm_db_partition_stats AS ps
-                                        WHERE   ps.object_id = ind.object_id
-                                                AND ps.index_id = ind.index_id
-                                ) AS pfs(page_count)
                 LEFT JOIN       sys.data_spaces AS dsp ON dsp.data_space_id = ind.data_space_id
                 LEFT JOIN       sys.dm_db_xtp_hash_index_stats AS his ON his.object_id = ind.object_id
                                         AND his.index_id = ind.index_id
@@ -1501,6 +1454,7 @@ BEGIN TRY
                                         AND sta.stats_id = ind.index_id
                 LEFT JOIN       sys.spatial_index_tessellations AS sit ON sit.object_id = ind.object_id
                                         AND sit.index_id = ind.index_id
+                LEFT JOIN       #page_counts AS pc ON pc.object_id = ind.object_id
                 OUTER APPLY     (
                                         SELECT  CASE
                                                         WHEN ind.fill_factor = 0 AND CONVERT(TINYINT, value) = 0 THEN CAST(100 AS TINYINT)
@@ -1574,7 +1528,7 @@ BEGIN TRY
                                 phase,
                                 sql_text
                         )
-        SELECT DISTINCT act.action_code,
+        SELECT          act.action_code,
                         'L' AS status_code,
                         act.sort_order,
                         cte.entity,
@@ -1583,7 +1537,7 @@ BEGIN TRY
         FROM            cte_indexes AS cte
         CROSS APPLY     (
                                 SELECT  'crix' AS action_code,
-                                        330 AS sort_order,
+                                        340 AS sort_order,
                                         9 AS phase,
                                         CASE
                                                 -- Nonclustered hash index
@@ -1616,15 +1570,16 @@ BEGIN TRY
                                 UNION ALL
 
                                 SELECT  'drix',
-                                        70 AS sort_order,
+                                        80 AS sort_order,
                                         3 AS phase,
                                         CASE
                                                 WHEN cte.is_memory_optimized = 1 THEN CONCAT('ALTER TABLE ', cte.table_name, ' DROP INDEX ', cte.index_name, ');')
                                                 WHEN 1 IN (cte.is_primary_key, cte.is_unique_constraint) THEN CONCAT('ALTER TABLE ', cte.table_name, ' DROP CONSTRAINT ', cte.index_name, ' WITH (', cte.online, ');')
                                                 ELSE CONCAT('DROP INDEX ', cte.index_name, ' ON ', cte.table_name, ' WITH (', cte.online, ');')
                                         END
-                ) AS act (action_code, sort_order, phase, sql_text)
-        OPTION  (RECOMPILE);
+                        ) AS act (action_code, sort_order, phase, sql_text)
+        ORDER BY        cte.page_count DESC
+        OPTION          (RECOMPILE);
 
         -- entg = Enable table triggers
         -- ditg = Disable table triggers
@@ -1648,7 +1603,7 @@ BEGIN TRY
         FROM            (
                                 SELECT DISTINCT ind.table_id,
                                                 ind.entity,
-                                                ind.table_name                                                
+                                                ind.table_name
                                 FROM            #index_columns AS ind
                         ) AS wrk
         INNER JOIN      sys.triggers AS trg ON trg.parent_id = wrk.table_id
@@ -1663,7 +1618,7 @@ BEGIN TRY
                                         ),
                                         (
                                                 'entg',
-                                                400,
+                                                420,
                                                 13,
                                                 CONCAT('ALTER TABLE ', wrk.table_name, ' ENABLE TRIGGER ', QUOTENAME(trg.name COLLATE DATABASE_DEFAULT), ';')
                                         )
@@ -1707,7 +1662,8 @@ BEGIN TRY
                                 update_action,
                                 referenced_table_name,
                                 parent_table_name,
-                                entity
+                                entity,
+                                page_count
                         )
         SELECT          fk.object_id AS id,
                         QUOTENAME(fk.name COLLATE DATABASE_DEFAULT) AS name,
@@ -1725,11 +1681,14 @@ BEGIN TRY
                         END AS update_action,
                         CONCAT(QUOTENAME(SCHEMA_NAME(ref.schema_id) COLLATE DATABASE_DEFAULT), '.', QUOTENAME(ref.name COLLATE DATABASE_DEFAULT)) AS referenced_table_name,
                         CONCAT(QUOTENAME(SCHEMA_NAME(par.schema_id) COLLATE DATABASE_DEFAULT), '.', QUOTENAME(par.name COLLATE DATABASE_DEFAULT)) AS parent_table_name,
-                        CONCAT(SCHEMA_NAME(par.schema_id) COLLATE DATABASE_DEFAULT, '.', par.name COLLATE DATABASE_DEFAULT) AS entity
+                        CONCAT(SCHEMA_NAME(par.schema_id) COLLATE DATABASE_DEFAULT, '.', par.name COLLATE DATABASE_DEFAULT) AS entity,
+                        COALESCE(pc1.page_count, 1E) * COALESCE(pc2.page_count, 1E) AS page_count
         FROM            cte_candidates AS cte
         INNER JOIN      sys.foreign_keys AS fk ON fk.object_id = cte.foreign_key_id
         INNER JOIN      sys.objects AS ref ON ref.object_id = fk.referenced_object_id
         INNER JOIN      sys.objects AS par ON par.object_id = fk.parent_object_id
+        LEFT JOIN       #page_counts AS pc1 ON pc1.object_id = fk.referenced_object_id
+        LEFT JOIN       #page_counts AS pc2 ON pc2.object_id = fk.parent_object_id
         OPTION          (RECOMPILE);
 
         UPDATE          fk
@@ -1777,13 +1736,14 @@ BEGIN TRY
                                         ),
                                         (
                                                 'crfk',
-                                                350,
+                                                370,
                                                 10,
                                                 CONCAT('ALTER TABLE ', fk.parent_table_name, ' WITH CHECK ADD CONSTRAINT ', fk.name, ' FOREIGN KEY (', fk.parent_columns, ') REFERENCES ', fk.referenced_table_name, ' (', fk.referenced_columns, ') ', fk.delete_action, ' ', fk.update_action, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
+        ORDER BY        fk.page_count DESC
         OPTION          (RECOMPILE);
-                        
+
         -- crvw = Create view
         -- drvw = Drop view
         RAISERROR('Adding view statements to queue...', 10, 1) WITH NOWAIT;
@@ -1810,13 +1770,13 @@ BEGIN TRY
         CROSS APPLY     (
                                 VALUES  (
                                                 'drvw',
-                                                80,
+                                                90,
                                                 3,
                                                 CONCAT('DROP VIEW ', QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(vw.name COLLATE DATABASE_DEFAULT), ';')
                                         ),
                                         (
                                                 'crvw',
-                                                320,
+                                                330,
                                                 9,
                                                 CONCAT(sqm.definition COLLATE DATABASE_DEFAULT, ';')
                                         )
@@ -1861,24 +1821,84 @@ BEGIN TRY
         CROSS APPLY     (
                                 VALUES  (
                                                 'drfn',
-                                                90,
+                                                100,
                                                 3,
                                                 CONCAT('DROP FUNCTION ', QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(obj.name COLLATE DATABASE_DEFAULT), ';')
                                         ),
                                         (
                                                 'crfn',
-                                                310,
+                                                320,
                                                 9,
                                                 CONCAT(sqm.definition COLLATE DATABASE_DEFAULT, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
         OPTION          (RECOMPILE);
 
+        -- crst = Create user defined statistics
+        -- drst = Drop user defined statistics
+        WITH cte_statistics(entity, drop_definition, create_definition, page_count)
+        AS (
+                SELECT          CONCAT(sch.name COLLATE DATABASE_DEFAULT, '.', tbl.name COLLATE DATABASE_DEFAULT) AS entity,
+                                CONCAT('DROP STATISTICS ', QUOTENAME(sch.name) COLLATE DATABASE_DEFAULT, '.', QUOTENAME(tbl.name) COLLATE DATABASE_DEFAULT, '.', QUOTENAME(sts.name) COLLATE DATABASE_DEFAULT, ';') AS drop_definition,
+                                CONCAT('CREATE STATISTICS ', QUOTENAME(sts.name) COLLATE DATABASE_DEFAULT, ' ON ', QUOTENAME(sch.name) COLLATE DATABASE_DEFAULT, '.', QUOTENAME(tbl.name) COLLATE DATABASE_DEFAULT, ' (', col.content, ')', CASE WHEN sts.has_filter = 1 THEN CONCAT(' WHERE ', sts.filter_definition) ELSE NULL END, ' WITH INCREMENTAL = ', CASE WHEN sts.is_incremental = 1 THEN 'ON' ELSE 'OFF' END, CASE WHEN sts.no_recompute = 1 THEN ', NORECOMPUTE' ELSE '' END, CASE WHEN sts.has_persisted_sample = 1 THEN ', PERSIST_SAMPLE_PERCENT = ON' ELSE NULL END, CASE WHEN f.persisted_sample_percent = 0 THEN ', FULLSCAN' WHEN ROUND(f.persisted_sample_percent, 0) = f.persisted_sample_percent THEN CONCAT(', SAMPLE ', ROUND(f.persisted_sample_percent, 0), ' PERCENT') ELSE CONCAT(', SAMPLE ', ROUND(f.persisted_sample_percent * f.rows_sampled / 100, 0), ' ROWS') END, ';') AS create_definition,
+                                COALESCE(pc.page_count, 0) AS page_count
+                FROM            sys.stats AS sts
+                INNER JOIN      sys.tables AS tbl ON tbl.object_id = sts.object_id
+                INNER JOIN      sys.schemas AS sch ON sch.schema_id = tbl.schema_id
+                CROSS APPLY     (
+                                        SELECT          STRING_AGG(CAST(QUOTENAME(col.name) COLLATE DATABASE_DEFAULT AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY stc.stats_column_id)
+                                        FROM            sys.stats_columns AS stc
+                                        INNER JOIN      sys.columns AS col ON col.object_id = stc.object_id
+                                                                AND col.column_id = stc.column_id
+                                        LEFT JOIN       #configurations AS cfg ON cfg.table_id = stc.object_id
+                                                                AND cfg.column_id = stc.column_id
+                                        WHERE           stc.object_id = sts.object_id
+                                                        AND stc.stats_id = sts.stats_id
+                                        HAVING          MAX(CASE WHEN cfg.table_id IS NULL THEN 0 ELSE 1 END) = 1
+                                ) AS col(content)
+                CROSS APPLY     sys.dm_db_stats_properties(sts.object_id, sts.stats_id) AS f
+                LEFT JOIN       #page_counts AS pc ON pc.object_id = tbl.object_id
+                WHERE           sts.user_created = 1
+                                AND col.content IS NOT NULL
+        )
+        INSERT          dbo.atac_queue
+                        (
+                                action_code,
+                                status_code,
+                                sort_order,
+                                entity,
+                                phase,
+                                sql_text
+                        )
+        SELECT          act.action_code,
+                        'L' AS status_code,
+                        act.sort_order,
+                        cte.entity,
+                        act.phase,
+                        act.sql_text
+        FROM            cte_statistics AS cte
+        CROSS APPLY     (
+                                VALUES  (
+                                                'drst',
+                                                60,
+                                                3,
+                                                cte.drop_definition
+                                        ),
+                                        (
+                                                'crst',
+                                                360,
+                                                9,
+                                                cte.create_definition
+                                        )
+                        ) AS act(action_code, sort_order, phase, sql_text)
+        ORDER BY        cte.page_count DESC
+        OPTION          (RECOMPILE);
+
         -- crck = Create table check constraint
         -- drck = Drop table check constraint
         RAISERROR('Adding table check constraint statements to queue...', 10, 1) WITH NOWAIT;
 
-        WITH cte_check_constraints(table_name, entity, check_constraint_name, check_definition)
+        WITH cte_check_constraints(table_name, entity, check_constraint_name, check_definition, page_count)
         AS (
                 SELECT DISTINCT CONCAT(QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(tbl.name COLLATE DATABASE_DEFAULT)) AS table_name,
                                 CONCAT(sch.name COLLATE DATABASE_DEFAULT, '.', tbl.name COLLATE DATABASE_DEFAULT) AS entity,
@@ -1886,7 +1906,8 @@ BEGIN TRY
                                 CASE
                                         WHEN wrk.new_column_name > '' THEN REPLACE(chc.definition COLLATE DATABASE_DEFAULT, QUOTENAME(wrk.column_name), QUOTENAME(wrk.new_column_name))
                                         ELSE chc.definition COLLATE DATABASE_DEFAULT
-                                END AS check_definition
+                                END AS check_definition,
+                                COALESCE(pc.page_count, 0) AS page_count
                 FROM            sys.check_constraints AS chc
                 INNER JOIN      sys.objects AS tbl ON tbl.object_id = chc.parent_object_id
                                         AND tbl.type COLLATE DATABASE_DEFAULT = 'U'
@@ -1894,6 +1915,7 @@ BEGIN TRY
                 LEFT JOIN       #configurations AS wrk ON wrk.table_id = chc.parent_object_id
                 LEFT JOIN       sys.columns AS col ON col.object_id = tbl.object_id
                                         AND col.name COLLATE DATABASE_DEFAULT = wrk.column_name
+                LEFT JOIN       #page_counts AS pc ON pc.object_id = tbl.object_id
                 WHERE           (
                                         col.column_id = chc.parent_column_id
                                         OR CHARINDEX(QUOTENAME(wrk.column_name), chc.definition COLLATE DATABASE_DEFAULT) >= 1
@@ -1919,24 +1941,25 @@ BEGIN TRY
         CROSS APPLY     (
                                 VALUES  (
                                                 'drck',
-                                                110,
+                                                120,
                                                 3,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' DROP CONSTRAINT ', cte.check_constraint_name, ';')
                                         ),
                                         (
                                                 'crck',
-                                                290,
+                                                300,
                                                 9,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' WITH CHECK ADD CONSTRAINT ', cte.check_constraint_name, ' CHECK ', cte.check_definition, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
+        ORDER BY        cte.page_count DESC
         OPTION          (RECOMPILE);
 
         -- crdk = Create table default constraint
         -- drdk = Drop table default constraint
         RAISERROR('Adding table default constraint statements to queue...', 10, 1) WITH NOWAIT;
 
-        WITH cte_default_constraints(table_name, entity, column_name, default_constraint_name, default_definition)
+        WITH cte_default_constraints(table_name, entity, column_name, default_constraint_name, default_definition, page_count)
         AS (
                 SELECT DISTINCT CONCAT(QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(tbl.name COLLATE DATABASE_DEFAULT)) AS table_name,
                                 wrk.table_name AS entity,
@@ -1945,7 +1968,8 @@ BEGIN TRY
                                 CASE
                                         WHEN col.name COLLATE DATABASE_DEFAULT = wrk.column_name AND wrk.new_column_name > '' THEN REPLACE(dfc.definition COLLATE DATABASE_DEFAULT, QUOTENAME(wrk.column_name), QUOTENAME(wrk.new_column_name))
                                         ELSE dfc.definition COLLATE DATABASE_DEFAULT
-                                END AS default_definition
+                                END AS default_definition,
+                                COALESCE(pc.page_count, 0) AS page_count
                 FROM            sys.default_constraints AS dfc
                 INNER JOIN      #configurations AS wrk ON wrk.table_id = dfc.parent_object_id
                 INNER JOIN      sys.objects AS tbl ON tbl.object_id = dfc.parent_object_id
@@ -1954,6 +1978,7 @@ BEGIN TRY
                 INNER JOIN      sys.columns AS col ON col.object_id = dfc.parent_object_id
                                         AND col.column_id = dfc.parent_column_id
                                         AND col.name COLLATE DATABASE_DEFAULT = wrk.column_name
+                LEFT JOIN       #page_counts AS pc ON pc.object_id = tbl.object_id
                 WHERE           dfc.is_ms_shipped = 0
         )
         INSERT          dbo.atac_queue
@@ -1975,24 +2000,25 @@ BEGIN TRY
         CROSS APPLY     (
                                 VALUES  (
                                                 'drdk',
-                                                120,
+                                                130,
                                                 3,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' DROP CONSTRAINT ', cte.default_constraint_name, ';')
                                         ),
                                         (
                                                 'crdk',
-                                                280,
+                                                290,
                                                 9,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' ADD CONSTRAINT ', cte.default_constraint_name, ' DEFAULT ', cte.default_definition, ' FOR ', cte.column_name, ';')
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
+        ORDER BY        cte.page_count DESC
         OPTION          (RECOMPILE);
 
         -- drcc = Drop Computed Columns
         -- crcc = Create Computed Columns
         RAISERROR('Adding computed column statements to queue...', 10, 1) WITH NOWAIT;
 
-        WITH cte_computed_columns(table_name, entity, column_name, is_persisted, computed_definition)
+        WITH cte_computed_columns(table_name, entity, column_name, is_persisted, computed_definition, page_count)
         AS (
                 SELECT DISTINCT CONCAT(QUOTENAME(sch.name COLLATE DATABASE_DEFAULT), '.', QUOTENAME(tbl.name COLLATE DATABASE_DEFAULT)) AS table_name,
                                 CONCAT(sch.name COLLATE DATABASE_DEFAULT, '.', tbl.name COLLATE DATABASE_DEFAULT) AS entity,
@@ -2001,12 +2027,14 @@ BEGIN TRY
                                 CASE
                                         WHEN wrk.new_column_name > '' THEN REPLACE(col.definition COLLATE DATABASE_DEFAULT, QUOTENAME(wrk.column_name), QUOTENAME(wrk.new_column_name))
                                         ELSE col.definition COLLATE DATABASE_DEFAULT
-                                END AS computed_definition
+                                END AS computed_definition,
+                                COALESCE(pc.page_count, 0) AS page_count
                 FROM            sys.computed_columns AS col
                 INNER JOIN      sys.objects AS tbl ON tbl.object_id = col.object_id
                                         AND tbl.type COLLATE DATABASE_DEFAULT = 'U'
                 INNER JOIN      sys.schemas AS sch ON sch.schema_id = tbl.schema_id
                 LEFT JOIN       #configurations AS wrk ON wrk.table_id = col.object_id
+                LEFT JOIN       #page_counts AS pc ON pc.object_id = tbl.object_id
                 WHERE           (
                                         wrk.column_id = col.column_id
                                         OR CHARINDEX(QUOTENAME(wrk.column_name), col.definition COLLATE DATABASE_DEFAULT) >= 1
@@ -2027,22 +2055,23 @@ BEGIN TRY
                         act.sort_order,
                         cte.entity,
                         act.phase,
-                        act.sql_text                      
+                        act.sql_text
         FROM            cte_computed_columns AS cte
         CROSS APPLY     (
                                 VALUES  (
                                                 'drcc',
-                                                130,
+                                                140,
                                                 3,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' DROP COLUMN ', cte.column_name, ';')
                                         ),
                                         (
                                                 'crcc',
-                                                270,
+                                                280,
                                                 9,
                                                 CONCAT('ALTER TABLE ', cte.table_name, ' ADD ', cte.column_name, ' AS ', cte.computed_definition, CASE WHEN cte.is_persisted = 1 THEN ' PERSISTED;' ELSE ';' END)
                                         )
                         ) AS act(action_code, sort_order, phase, sql_text)
+        ORDER BY        cte.page_count DESC
         OPTION          (RECOMPILE);
 
         -- undf = Unbind column default
@@ -2062,10 +2091,9 @@ BEGIN TRY
                                         AND cfg.column_name = col.name COLLATE DATABASE_DEFAULT
                 INNER JOIN      sys.objects AS tbl ON tbl.object_id = col.object_id
                                         AND tbl.type COLLATE DATABASE_DEFAULT = 'U'
-                INNER JOIN      sys.objects AS def ON def.object_id = col.default_object_id
+                LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
                                         AND def.type COLLATE DATABASE_DEFAULT = 'D'
-                INNER JOIN      sys.sql_modules AS sqm ON sqm.object_id = def.object_id
-                WHERE           col.default_object_id <> 0
+                LEFT JOIN       sys.sql_modules AS sqm ON sqm.object_id = def.object_id
         )
         INSERT          dbo.atac_queue
                         (
@@ -2086,13 +2114,13 @@ BEGIN TRY
         CROSS APPLY     (
                                 VALUES  (
                                                 'undf',
-                                                140,
+                                                CASE WHEN cte.default_definition >= '' THEN 150 ELSE NULL END,
                                                 3,
                                                 CONCAT('EXEC sys.sp_unbindefault @objname = ''', REPLACE(CONCAT(cte.table_name, '.', cte.column_name), '''', ''''''), ''';')
                                         ),
                                         (
                                                 'bidf',
-                                                CASE WHEN cte.datatype_default_name = '' THEN NULL ELSE 260 END,
+                                                CASE WHEN cte.datatype_default_name > '' THEN 270 ELSE NULL END,
                                                 9,
                                                 CONCAT('EXEC sys.sp_bindefault @defname = ', QUOTENAME(cte.datatype_default_name, ''''), ', @objname = ''', REPLACE(CONCAT(cte.table_name, '.', CASE WHEN cte.new_column_name > '' THEN QUOTENAME(cte.new_column_name) ELSE cte.column_name END), '''', ''''''), ''';')
                                         )
@@ -2117,9 +2145,9 @@ BEGIN TRY
                                         AND cfg.column_name = col.name COLLATE DATABASE_DEFAULT
                 INNER JOIN      sys.objects AS tbl ON tbl.object_id = col.object_id
                                         AND tbl.type COLLATE DATABASE_DEFAULT = 'U'
-                INNER JOIN      sys.objects AS rul ON rul.object_id = col.rule_object_id
+                LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id
                                         AND rul.type COLLATE DATABASE_DEFAULT = 'R'
-                INNER JOIN      sys.sql_modules AS sqm ON sqm.object_id = rul.object_id
+                LEFT JOIN       sys.sql_modules AS sqm ON sqm.object_id = rul.object_id
                 WHERE           col.rule_object_id <> 0
         )
         INSERT          dbo.atac_queue
@@ -2141,13 +2169,13 @@ BEGIN TRY
         CROSS APPLY     (
                                 VALUES  (
                                                 'unru',
-                                                160,
+                                                CASE WHEN cte.rule_definition >= '' THEN 170 ELSE NULL END,
                                                 3,
                                                 CONCAT('EXEC sys.sp_unbindrule @objname = ''', REPLACE(CONCAT(cte.table_name, '.', cte.column_name), '''', ''''''), ''';')
                                         ),
                                         (
                                                 'biru',
-                                                CASE WHEN cte.datatype_rule_name = '' THEN NULL ELSE 240 END,
+                                                CASE WHEN cte.datatype_rule_name > '' THEN 250 ELSE NULL END,
                                                 9,
                                                 CONCAT('EXEC sys.sp_bindrule @rulename = ', QUOTENAME(cte.datatype_rule_name), ', @objname = ''', REPLACE(CONCAT(cte.table_name, '.', CASE WHEN cte.new_column_name > '' THEN cte.new_column_name ELSE cte.column_name END), '''', ''''''), ''';')
                                         )
@@ -2186,7 +2214,7 @@ BEGIN TRY
                                         )
                         SELECT          'aldb' AS action_code,
                                         'L' AS status_code,
-                                        190 AS sort_order,
+                                        200 AS sort_order,
                                         5 AS phase,
                                         DB_NAME() AS entity,
                                         cte.sql_text
@@ -2198,53 +2226,56 @@ BEGIN TRY
         -- alco = Alter column
         RAISERROR('Adding alter column statements to queue...', 10, 1) WITH NOWAIT;
 
-        WITH cte_column(table_name, entity, column_name, is_nullable, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name)
+        WITH cte_column(table_name, entity, column_name, is_nullable, datatype_name, max_length, precision_and_scale, collation_name, xml_collection_name, page_count)
         AS (
-                SELECT  CONCAT(QUOTENAME(PARSENAME(cfg.table_name, 2)), '.', QUOTENAME(PARSENAME(cfg.table_name, 1))) AS table_name,
-                        cfg.table_name AS entity,
-                        QUOTENAME(cfg.column_name) AS column_name,
-                        CASE
-                                WHEN cfg.is_nullable = 'true' THEN ' NULL'
-                                ELSE ' NOT NULL'
-                        END AS is_nullable,
-                        QUOTENAME(cfg.datatype_name) AS datatype_name,
-                        CASE
-                                WHEN cfg.max_length IS NULL THEN ''
-                                ELSE CONCAT('(', cfg.max_length, ')')
-                        END AS max_length,
-                        CASE
-                                WHEN cfg.precision IS NULL AND cfg.scale IS NULL THEN ''
-                                WHEN cfg.precision IS NULL THEN CONCAT('(', cfg.scale, ')')
-                                ELSE CONCAT('(', cfg.precision, ', ', cfg.scale, ')')
-                        END AS precision_and_scale,
-                        CASE
-                                WHEN cfg.collation_name > '' THEN CONCAT(' COLLATE ', cfg.collation_name)
-                                ELSE ''
-                        END AS collation_name,
-                        CASE
-                                WHEN cfg.xml_collection_name > '' THEN CONCAT('(', QUOTENAME(PARSENAME(cfg.xml_collection_name, 2)), '.', QUOTENAME(PARSENAME(cfg.xml_collection_name, 1)), ')')
-                                ELSE ''
-                        END AS xml_collection_name
-                FROM    #configurations AS cfg
-                WHERE   cfg.is_computed = 0
+                SELECT          CONCAT(QUOTENAME(PARSENAME(cfg.table_name, 2)), '.', QUOTENAME(PARSENAME(cfg.table_name, 1))) AS table_name,
+                                cfg.table_name AS entity,
+                                QUOTENAME(cfg.column_name) AS column_name,
+                                CASE
+                                        WHEN cfg.is_nullable = 'true' THEN ' NULL'
+                                        ELSE ' NOT NULL'
+                                END AS is_nullable,
+                                QUOTENAME(cfg.datatype_name) AS datatype_name,
+                                CASE
+                                        WHEN cfg.max_length IS NULL THEN ''
+                                        ELSE CONCAT('(', cfg.max_length, ')')
+                                END AS max_length,
+                                CASE
+                                        WHEN cfg.precision IS NULL AND cfg.scale IS NULL THEN ''
+                                        WHEN cfg.precision IS NULL THEN CONCAT('(', cfg.scale, ')')
+                                        ELSE CONCAT('(', cfg.precision, ', ', cfg.scale, ')')
+                                END AS precision_and_scale,
+                                CASE
+                                        WHEN cfg.collation_name > '' THEN CONCAT(' COLLATE ', cfg.collation_name)
+                                        ELSE ''
+                                END AS collation_name,
+                                CASE
+                                        WHEN cfg.xml_collection_name > '' THEN CONCAT('(', QUOTENAME(PARSENAME(cfg.xml_collection_name, 2)), '.', QUOTENAME(PARSENAME(cfg.xml_collection_name, 1)), ')')
+                                        ELSE ''
+                                END AS xml_collection_name,
+                                COALESCE(pc.page_count, 0) AS page_count
+                FROM            #configurations AS cfg
+                LEFT JOIN       #page_counts AS pc ON pc.object_id = cfg.table_id
+                WHERE           cfg.is_computed = 0
         )
-        INSERT  dbo.atac_queue
-                (
-                        action_code,
-                        status_code,
-                        sort_order,
-                        entity,
-                        phase,
-                        sql_text
-                )
-        SELECT  'alco' AS action_code,
-                'L' AS status_code,
-                200 AS sort_order,
-                cte.entity,
-                6 AS phase,
-                CONCAT('ALTER TABLE ', cte.table_name, ' ALTER COLUMN ', cte.column_name, ' ', cte.datatype_name, cte.max_length, cte.precision_and_scale, cte.collation_name, cte.xml_collection_name, cte.is_nullable, ';') AS sql_text
-        FROM    cte_column AS cte
-        OPTION  (RECOMPILE);
+        INSERT          dbo.atac_queue
+                        (
+                                action_code,
+                                status_code,
+                                sort_order,
+                                entity,
+                                phase,
+                                sql_text
+                        )
+        SELECT          'alco' AS action_code,
+                        'L' AS status_code,
+                        210 AS sort_order,
+                        cte.entity,
+                        6 AS phase,
+                        CONCAT('ALTER TABLE ', cte.table_name, ' ALTER COLUMN ', cte.column_name, ' ', cte.datatype_name, cte.max_length, cte.precision_and_scale, cte.collation_name, cte.xml_collection_name, cte.is_nullable, ';') AS sql_text
+        FROM            cte_column AS cte
+        ORDER BY        cte.page_count DESC
+        OPTION          (RECOMPILE);
 
         -- reco = Rename a column
         RAISERROR('Adding column rename statements to queue...', 10, 1) WITH NOWAIT;
@@ -2269,7 +2300,7 @@ BEGIN TRY
                 )
         SELECT  'reco' AS action_code,
                 'L' AS status_code,
-                210 sort_order,
+                220 sort_order,
                 cte.entity,
                 7 AS phase,
                 CONCAT('EXEC sys.sp_rename @objname = ''', REPLACE(CONCAT(cte.table_name, '.', cte.column_name), '''', ''''''), ''', @newname = ', cte.new_column_name, ', @objtype = ''COLUM'';') AS sql_text
@@ -2281,6 +2312,18 @@ BEGIN TRY
                 BEGIN
                         RAISERROR('Adding clean table statements to queue...', 10, 1) WITH NOWAIT;
 
+                        WITH cte_tables(entity, sql_text, page_count)
+                        AS (
+                                        SELECT DISTINCT cfg.table_name AS entity,
+                                                        CONCAT('DBCC CLEANTABLE(', QUOTENAME(DB_NAME()), ', ''', REPLACE(cfg.table_name, '''', ''''''), ''');') AS sql_text,
+                                                        COALESCE(pc.page_count, 0) AS page_count
+                                        FROM            #configurations AS cfg
+                                        INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
+                                                                AND col.column_id = cfg.column_id
+                                        INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
+                                                                AND typ.name IN ('varchar', 'nvarchar', 'varbinary', 'text', 'ntext', 'image', 'sql_variant', 'xml')
+                                        LEFT JOIN       #page_counts AS pc ON pc.object_id = col.object_id
+                        )
                         INSERT          dbo.atac_queue
                                         (
                                                 action_code,
@@ -2290,17 +2333,14 @@ BEGIN TRY
                                                 phase,
                                                 sql_text
                                         )
-                        SELECT DISTINCT 'cltb' AS action_code,
+                        SELECT          'cltb' AS action_code,
                                         'L' AS status_code,
-                                        370 AS sort_order,
-                                        cfg.table_name AS entity,
+                                        390 AS sort_order,
+                                        cte.entity,
                                         11 AS phase,
-                                        CONCAT('DBCC CLEANTABLE(', QUOTENAME(DB_NAME()), ', ''', REPLACE(cfg.table_name, '''', ''''''), ''');') AS sql_text
-                        FROM            #configurations AS cfg
-                        INNER JOIN      sys.columns AS col ON col.object_id = cfg.table_id
-                                                AND col.column_id = cfg.column_id
-                        INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
-                                                AND typ.name IN ('varchar', 'nvarchar', 'varbinary', 'text', 'ntext', 'image', 'sql_variant', 'xml')
+                                        cte.sql_text
+                        FROM            cte_tables AS cte
+                        ORDER BY        cte.page_count DESC
                         OPTION          (RECOMPILE);
                 END;
 
@@ -2320,7 +2360,7 @@ BEGIN TRY
                                         )
                         SELECT          'remo' AS action_code,
                                         'L' AS status_code,
-                                        380 AS sort_order,
+                                        400 AS sort_order,
                                         CONCAT(SCHEMA_NAME(obj.schema_id) COLLATE DATABASE_DEFAULT, '.', obj.name COLLATE DATABASE_DEFAULT) AS entity,
                                         12 AS phase,
                                         CONCAT('EXEC sys.sp_refreshsqlmodule @name = ''', REPLACE(CONCAT(QUOTENAME(OBJECT_SCHEMA_NAME(dep.object_id) COLLATE DATABASE_DEFAULT), '.', QUOTENAME(OBJECT_NAME(dep.object_id) COLLATE DATABASE_DEFAULT)), '''', ''''''), ''';') AS sql_text
@@ -2340,11 +2380,11 @@ BEGIN TRY
         DELETE  cte
         FROM    cte_duplicates AS cte
         WHERE   cte.rnk >= 2;
-        
+
         WITH cte_sort(statement_id, rnk)
         AS (
                 SELECT  aqe.statement_id,
-                        ROW_NUMBER() OVER (ORDER BY aqe.sort_order, aqe.entity, aqe.queue_id) AS rnk
+                        ROW_NUMBER() OVER (ORDER BY aqe.sort_order, aqe.queue_id) AS rnk
                 FROM    dbo.atac_queue AS aqe
         )
         UPDATE  cte
