@@ -13,7 +13,9 @@ CREATE TABLE    atac_configurations
                         is_nullable VARCHAR(5) NULL CONSTRAINT ck_atac_configurations_is_nullable CHECK (
                                                                                                                    is_nullable IS NULL          -- Inherit current setting
                                                                                                                 OR is_nullable = 'true'         -- Set column nullable
+                                                                                                                OR is_nullable = 'yes'
                                                                                                                 OR is_nullable = 'false'        -- Set column non-nullable
+                                                                                                                OR is_nullable = 'no'
                                                                                                         ),
                         datatype_name VARCHAR(128) NULL CONSTRAINT ck_atac_configurations_datatype_name CHECK   (
                                                                                                                            datatype_name IS NULL        -- Inherit current column setting
