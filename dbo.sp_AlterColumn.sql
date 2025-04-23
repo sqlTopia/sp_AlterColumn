@@ -229,8 +229,6 @@ BEGIN TRY
                 END;
 
         -- Configurations exist
-        SET     @database_collation_name = PARSENAME(@database_collation_name, 1);
-
         IF NOT EXISTS(SELECT * FROM tools.atac_configurations AS cfg) AND (@database_collation_name IS NULL OR @database_collation_name = CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS VARCHAR(128)))
                 BEGIN
                         RAISERROR('There are no configurations to process.', 16, 1, @progress);
@@ -385,10 +383,8 @@ BEGIN TRY
         INNER JOIN      sys.types AS typ ON typ.user_type_id = col.system_type_id
         LEFT JOIN       sys.xml_schema_collections AS xsc ON xsc.xml_collection_id = col.xml_collection_id
         LEFT JOIN       sys.objects AS def ON def.object_id = col.default_object_id
-                                AND def.type = N'D'
         LEFT JOIN       sys.objects AS rul ON rul.object_id = col.rule_object_id
-                                AND def.type = N'R'
-        ORDER BY        col.object_id,
+        ORDER BY        col.object_id,        
                         col.column_id;
 
         -- Get graphs
@@ -458,7 +454,7 @@ BEGIN TRY
         WHERE   cte.items >= 2;
 
         -- Fetch future payload
-        RAISERROR('  Checking configurations...', 10, 1) WITH NOWAIT;
+        RAISERROR('  Replenishing configurations...', 10, 1) WITH NOWAIT;
 
         INSERT          #future
                         (
@@ -494,8 +490,8 @@ BEGIN TRY
                         col.is_computed,
                         usr.is_user_defined,
                         CASE
-                                WHEN cfg.is_nullable IN ('true', 'yes') THEN 1
-                                WHEN cfg.is_nullable IN ('false', 'no') THEN 0
+                                WHEN cfg.is_nullable = 'true' THEN 1
+                                WHEN cfg.is_nullable = 'false' THEN 0
                                 ELSE col.is_nullable
                         END AS is_nullable,
                         cfg.datatype_name,
@@ -504,25 +500,24 @@ BEGIN TRY
                                 WHEN typ.name COLLATE DATABASE_DEFAULT IN ('nvarchar', 'varbinary', 'varchar') AND cfg.max_length = 'MAX' THEN -1
                                 WHEN typ.name COLLATE DATABASE_DEFAULT IN ('binary', 'char', 'varbinary', 'varchar') AND cfg.max_length IS NOT NULL THEN CAST(cfg.max_length AS SMALLINT)
                                 WHEN typ.name COLLATE DATABASE_DEFAULT IN ('nchar', 'nvarchar') AND cfg.max_length IS NOT NULL THEN CAST(2 * cfg.max_length AS SMALLINT)
-                                ELSE COALESCE(typ.max_length, cur.max_length)
+                                ELSE cur.max_length
                         END AS max_length,
                         CASE
                                 WHEN typ.name COLLATE DATABASE_DEFAULT IN ('decimal', 'numeric') AND cfg.precision IS NOT NULL THEN cfg.precision
-                                ELSE COALESCE(typ.precision, cur.precision)
+                                ELSE cur.precision
                         END AS precision,
                         CASE
                                 WHEN typ.name COLLATE DATABASE_DEFAULT IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') AND cfg.scale IS NOT NULL THEN cfg.scale
-                                ELSE COALESCE(typ.scale, cur.scale)
+                                ELSE cur.scale
                         END AS scale,
                         CASE
                                 WHEN typ.name COLLATE DATABASE_DEFAULT IN ('char', 'nchar', 'nvarchar', 'varchar') AND cfg.collation_name > '' THEN cfg.collation_name
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('char', 'nchar', 'nvarchar', 'varchar') AND cfg.collation_name = '' THEN COALESCE(@database_collation_name, CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS SYSNAME))
-                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('char', 'nchar', 'nvarchar', 'varchar') AND cfg.collation_name IS NULL THEN COALESCE(@database_collation_name, cur.collation_name)
+                                WHEN typ.name COLLATE DATABASE_DEFAULT IN ('char', 'nchar', 'nvarchar', 'varchar') THEN COALESCE(@database_collation_name, cur.collation_name)
                                 ELSE NULL
                         END AS collation_name,
                         CASE
                                 WHEN typ.name COLLATE DATABASE_DEFAULT = 'xml' AND cfg.xml_collection_name >= '' THEN cfg.xml_collection_name
-                                ELSE cur.xml_collection_name
+                                ELSE NULL
                         END AS xml_collection_name,
                         CASE
                                 WHEN cfg.datatype_default_name >= '' THEN cfg.datatype_default_name
@@ -571,213 +566,7 @@ BEGIN TRY
         INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
                                 AND fut.column_name = cfg.column_name
         WHERE           fut.log_text IS NOT NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- New column name already exist in table
-        UPDATE          fut
-        SET             fut.log_text = CONCAT('Column ', fut.new_column_name, ' already exist in table ', fut.table_name, '.')
-        FROM            #future AS fut
-        INNER JOIN      sys.columns AS col ON col.object_id = fut.table_id
-                                AND col.name COLLATE DATABASE_DEFAULT = fut.new_column_name;
-
-        UPDATE          cfg
-        SET             cfg.log_text = fut.log_text
-        FROM            tools.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
-                                AND fut.column_name = cfg.column_name
-        WHERE           fut.log_text IS NOT NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- Same column is using different new column name
-        WITH cte_new_column_name(log_text, mi, mx, table_name, column_name, is_replenished)
-        AS (
-                SELECT  fut.log_text,
-                        MIN(COALESCE(fut.new_column_name, fut.column_name)) OVER (PARTITION BY fut.table_id, fut.column_id) AS mi,
-                        MAX(COALESCE(fut.new_column_name, fut.column_name)) OVER (PARTITION BY fut.table_id, fut.column_id) AS mx,
-                        fut.table_name,
-                        fut.column_name,
-                        fut.is_replenished
-                FROM    #future AS fut
-        )
-        UPDATE          cte
-        SET             cte.log_text = CONCAT('Different new column name is used in tables {', wrk.column_names, '}.')
-        FROM            cte_new_column_name AS cte
-        CROSS APPLY     (
-                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
-                                FROM    (
-                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
-                                                        ROW_NUMBER() OVER (PARTITION BY cte.table_name, cte.column_name ORDER BY cte.table_name, cte.column_name) AS rnk
-                                                FROM    #current AS cur
-                                                WHERE   cur.table_name = cte.table_name
-                                                        AND cur.column_name = cte.column_name
-                                        ) AS x
-                                WHERE   x.rnk = 1
-                        ) AS wrk
-        WHERE           cte.mi < cte.mx
-                        AND cte.is_replenished = 0;
-
-        UPDATE          cfg
-        SET             cfg.log_text = fut.log_text
-        FROM            tools.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
-                                AND cfg.column_name = cfg.column_name
-        WHERE           fut.log_text IS NOT NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- Check indeterministic max_length
-        WITH cte_max_length(log_text, mi, mx, graph_id, is_replenished)
-        AS (
-                SELECT  fut.log_text,
-                        MIN(COALESCE(fut.max_length, '')) OVER (PARTITION BY fut.graph_id) AS mi,
-                        MAX(COALESCE(fut.max_length, '')) OVER (PARTITION BY fut.graph_id) AS mx,
-                        fut.graph_id,
-                        fut.is_replenished
-                FROM    #future AS fut
-                WHERE   fut.node_count >= 2
-        )
-        UPDATE          cte
-        SET             cte.log_text = CONCAT('Different max_length in connected columns {', wrk.column_names, '}.')
-        FROM            cte_max_length AS cte
-        CROSS APPLY     (
-                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
-                                FROM    (
-                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
-                                                        ROW_NUMBER() OVER (PARTITION BY cur.max_length ORDER BY cur.table_name, cur.column_name) AS rnk
-                                                FROM    #current AS cur
-                                                WHERE   cur.graph_id = cte.graph_id
-                                        ) AS x
-                                WHERE   x.rnk = 1
-                        ) AS wrk
-        WHERE           cte.mi < cte.mx
-                        AND cte.is_replenished = 0
-                        AND cte.log_text IS NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- Check indeterministic precision
-        WITH cte_precision( log_text, mi, mx, graph_id, is_replenished)
-        AS (
-                SELECT  fut.log_text,
-                        MIN(COALESCE(fut.precision, -1)) OVER (PARTITION BY fut.graph_id) AS mi,
-                        MAX(COALESCE(fut.precision, -1)) OVER (PARTITION BY fut.graph_id) AS mx,
-                        fut.graph_id,
-                        fut.is_replenished
-                FROM    #future AS fut
-                WHERE   fut.node_count >= 2
-        )
-        UPDATE          cte
-        SET             cte.log_text = CONCAT('Different precision in connected columns {', wrk.column_names, '}.')
-        FROM            cte_precision AS cte
-        CROSS APPLY     (
-                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
-                                FROM    (
-                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
-                                                        ROW_NUMBER() OVER (PARTITION BY cur.precision ORDER BY cur.table_name, cur.column_name) AS rnk
-                                                FROM    #current AS cur
-                                                WHERE   cur.graph_id = cte.graph_id
-                                        ) AS x
-                                WHERE   x.rnk = 1
-                        ) AS wrk
-        WHERE           cte.mi < cte.mx
-                        AND cte.is_replenished = 0
-                        AND cte.log_text IS NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- Check indeterministic scale
-        WITH cte_scale(log_text, mi, mx, graph_id, is_replenished)
-        AS (
-                SELECT  fut.log_text,
-                        MIN(COALESCE(fut.scale, -1)) OVER (PARTITION BY fut.graph_id) AS mi,
-                        MAX(COALESCE(fut.scale, -1)) OVER (PARTITION BY fut.graph_id) AS mx,
-                        fut.graph_id,
-                        fut.is_replenished
-                FROM    #future AS fut
-                WHERE   fut.node_count >= 2
-        )
-        UPDATE          cte
-        SET             cte.log_text = CONCAT('Different scale in connected columns {', wrk.column_names, '}.')
-        FROM            cte_scale AS cte
-        CROSS APPLY     (
-                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
-                                FROM    (
-                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
-                                                        ROW_NUMBER() OVER (PARTITION BY cur.scale ORDER BY cur.table_name, cur.column_name) AS rnk
-                                                FROM    #current AS cur
-                                                WHERE   cur.graph_id = cte.graph_id
-                                        ) AS x
-                                WHERE   x.rnk = 1
-                        ) AS wrk
-        WHERE           cte.mi < cte.mx
-                        AND cte.is_replenished = 0
-                        AND cte.log_text IS NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- Check indeterministic collation name
-        WITH cte_collation_name(log_text, mi, mx, graph_id, is_replenished)
-        AS (
-                SELECT  fut.log_text,
-                        MIN(COALESCE(fut.collation_name, '')) OVER (PARTITION BY fut.graph_id) AS mi,
-                        MAX(COALESCE(fut.collation_name, '')) OVER (PARTITION BY fut.graph_id) AS mx,
-                        fut.graph_id,
-                        fut.is_replenished
-                FROM    #future AS fut
-                WHERE   fut.node_count >= 2
-        )
-        UPDATE          cte
-        SET             cte.log_text = CONCAT('Different collation name in connected columns {', wrk.column_names, '}.')
-        FROM            cte_collation_name AS cte
-        CROSS APPLY     (
-                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
-                                FROM    (
-                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
-                                                        ROW_NUMBER() OVER (PARTITION BY cur.collation_name ORDER BY cur.table_name, cur.column_name) AS rnk
-                                                FROM    #current AS cur
-                                                WHERE   cur.graph_id = cte.graph_id
-                                        ) AS x
-                                WHERE   x.rnk = 1
-                        ) AS wrk
-        WHERE           cte.mi < cte.mx
-                        AND cte.is_replenished = 0
-                        AND cte.log_text IS NULL;
-
-        UPDATE          cfg
-        SET             cfg.log_text = fut.log_text
-        FROM            tools.atac_configurations AS cfg
-        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
-                                AND fut.column_name = cfg.column_name
-        WHERE           fut.log_text IS NOT NULL;
-
-        IF EXISTS (SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
-                BEGIN
-                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
-                END;
-
-        -- Fetch future payload
-        RAISERROR('  Replenishing configurations...', 10, 1) WITH NOWAIT;
-
+ 
         -- Get all connected columns to validate properly
         WITH cte_graphs(graph_id, tag, collation_name)
         AS (
@@ -800,7 +589,7 @@ BEGIN TRY
         )
         MERGE   #future AS tgt
         USING   (
-                        SELECT          cte.tag,
+                        SELECT DISTINCT cte.tag,
                                         cur.table_id,
                                         cur.table_name,
                                         cur.column_id,
@@ -808,12 +597,12 @@ BEGIN TRY
                                         cur.is_user_defined,
                                         cur.is_computed,
                                         cur.is_nullable,
-                                        fut.datatype_name,
-                                        fut.system_datatype_name,
-                                        fut.max_length,
-                                        fut.precision,
-                                        fut.scale,
-                                        fut.collation_name,
+                                        cur.datatype_name,
+                                        cur.system_datatype_name,
+                                        cur.max_length,
+                                        cur.precision,
+                                        cur.scale,
+                                        cte.collation_name,
                                         cur.xml_collection_name,
                                         cur.datatype_default_name,
                                         cur.datatype_rule_name,
@@ -822,7 +611,6 @@ BEGIN TRY
                                         cur.node_count
                         FROM            #current AS cur
                         INNER JOIN      cte_graphs AS cte ON cte.graph_id = cur.graph_id
-                        INNER JOIN      #future AS fut ON fut.graph_id = cte.graph_id
                 ) AS src ON src.table_name = tgt.table_name
                         AND src.column_name = tgt.column_name
                         AND src.tag = tgt.tag
@@ -872,60 +660,220 @@ BEGIN TRY
                                         src.node_count
                                 );
 
-        IF EXISTS (SELECT * FROM #future AS fut WHERE fut.is_replenished = 1)
-                BEGIN
-                        INSERT  tools.atac_configurations
-                                (
-                                        tag,
-                                        table_name,
-                                        column_name,
-                                        new_column_name,
-                                        is_nullable,
-                                        datatype_name,
-                                        max_length,
-                                        precision,
-                                        scale,
-                                        collation_name,
-                                        xml_collection_name,
-                                        datatype_default_name,
-                                        datatype_rule_name,
-                                        log_text
-                                )
-                        SELECT  fut.tag,
-                                fut.table_name,
-                                fut.column_name,
-                                fut.new_column_name,
-                                CASE
-                                        WHEN fut.is_nullable = 1 THEN 'true'
-                                        ELSE 'false'
-                                END AS is_nullable,
-                                fut.datatype_name,
-                                CASE
-                                        WHEN fut.datatype_name COLLATE DATABASE_DEFAULT IN ('nvarchar', 'varbinary', 'varchar') AND fut.max_length = -1 THEN 'MAX'
-                                        WHEN fut.datatype_name COLLATE DATABASE_DEFAULT IN ('binary', 'char', 'varbinary', 'varchar') THEN fut.max_length
-                                        WHEN fut.datatype_name COLLATE DATABASE_DEFAULT IN ('nchar', 'nvarchar') THEN fut.max_length
-                                        ELSE NULL
-                                END AS max_length,
-                                CASE
-                                        WHEN fut.datatype_name COLLATE DATABASE_DEFAULT IN ('decimal', 'numeric') THEN fut.precision
-                                        ELSE NULL
-                                END AS precision,
-                                CASE
-                                        WHEN fut.datatype_name COLLATE DATABASE_DEFAULT IN ('datetime2', 'datetimeoffet', 'decimal', 'numeric', 'time') THEN fut.scale
-                                        ELSE NULL
-                                END AS scale,
-                                fut.collation_name,
-                                fut.xml_collection_name,
-                                fut.datatype_default_name,
-                                fut.datatype_rule_name,
-                                fut.log_text
-                        FROM    #future AS fut
-                        WHERE   fut.is_replenished = 1;
+        RAISERROR('  Checking configurations...', 10, 1) WITH NOWAIT;
 
-                        RAISERROR('There are replenished rows. Please validate and start sp_AlterColumn again.', 16, 1);
-                END;
+        -- New column name already exist in table
+        UPDATE          fut
+        SET             fut.log_text = CONCAT('Column ', fut.new_column_name, ' already exist in table ', fut.table_name, '.')
+        FROM            #future AS fut
+        INNER JOIN      sys.columns AS col ON col.object_id = fut.table_id
+                                AND col.name COLLATE DATABASE_DEFAULT = fut.new_column_name
+        WHERE           fut.is_replenished = 0;
+
+        UPDATE          cfg
+        SET             cfg.log_text = fut.log_text
+        FROM            tools.atac_configurations AS cfg
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND fut.column_name = cfg.column_name
+        WHERE           fut.log_text IS NOT NULL;
+
+        DELETE  fut
+        FROM    #future AS fut
+        WHERE   fut.log_text IS NOT NULL;
+
+        -- Same column is using different new column name
+        WITH cte_new_column_name(log_text, mi, mx, table_name, column_name, is_replenished)
+        AS (
+                SELECT  fut.log_text,
+                        MIN(COALESCE(fut.new_column_name, fut.column_name)) OVER (PARTITION BY fut.table_id, fut.column_id) AS mi,
+                        MAX(COALESCE(fut.new_column_name, fut.column_name)) OVER (PARTITION BY fut.table_id, fut.column_id) AS mx,
+                        fut.table_name,
+                        fut.column_name,
+                        fut.is_replenished
+                FROM    #future AS fut
+        )
+        UPDATE          cte
+        SET             cte.log_text = CONCAT('Different new column name is used in tables {', wrk.column_names, '}.')
+        FROM            cte_new_column_name AS cte
+        CROSS APPLY     (
+                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
+                                FROM    (
+                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
+                                                        ROW_NUMBER() OVER (PARTITION BY cte.table_name, cte.column_name ORDER BY cte.table_name, cte.column_name) AS rnk
+                                                FROM    #current AS cur
+                                                WHERE   cur.table_name = cte.table_name
+                                                        AND cur.column_name = cte.column_name
+                                        ) AS x
+                                WHERE   x.rnk = 1
+                        ) AS wrk
+        WHERE           cte.mi < cte.mx
+                        AND cte.is_replenished = 0;
+
+        UPDATE          cfg
+        SET             cfg.log_text = fut.log_text
+        FROM            tools.atac_configurations AS cfg
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND cfg.column_name = cfg.column_name
+        WHERE           fut.log_text IS NOT NULL;
+
+        DELETE  fut
+        FROM    #future AS fut
+        WHERE   fut.log_text IS NOT NULL;
+
+        -- Check indeterministic max_length
+        WITH cte_max_length(log_text, mi, mx, graph_id, is_replenished)
+        AS (
+                SELECT  fut.log_text,
+                        MIN(COALESCE(fut.max_length, '')) OVER (PARTITION BY fut.graph_id) AS mi,
+                        MAX(COALESCE(fut.max_length, '')) OVER (PARTITION BY fut.graph_id) AS mx,
+                        fut.graph_id,
+                        fut.is_replenished
+                FROM    #future AS fut
+                WHERE   fut.node_count >= 2
+        )
+        UPDATE          cte
+        SET             cte.log_text = CONCAT('Different max_length in connected columns {', wrk.column_names, '}.')
+        FROM            cte_max_length AS cte
+        CROSS APPLY     (
+                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
+                                FROM    (
+                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
+                                                        ROW_NUMBER() OVER (PARTITION BY cur.max_length ORDER BY cur.table_name, cur.column_name) AS rnk
+                                                FROM    #current AS cur
+                                                WHERE   cur.graph_id = cte.graph_id
+                                        ) AS x
+                                WHERE   x.rnk = 1
+                        ) AS wrk
+        WHERE           cte.mi < cte.mx
+                        AND cte.is_replenished = 0
+                        AND cte.log_text IS NULL;
+
+        -- Check indeterministic precision
+        WITH cte_precision( log_text, mi, mx, graph_id, is_replenished)
+        AS (
+                SELECT  fut.log_text,
+                        MIN(COALESCE(fut.precision, -1)) OVER (PARTITION BY fut.graph_id) AS mi,
+                        MAX(COALESCE(fut.precision, -1)) OVER (PARTITION BY fut.graph_id) AS mx,
+                        fut.graph_id,
+                        fut.is_replenished
+                FROM    #future AS fut
+                WHERE   fut.node_count >= 2
+        )
+        UPDATE          cte
+        SET             cte.log_text = CONCAT('Different precision in connected columns {', wrk.column_names, '}.')
+        FROM            cte_precision AS cte
+        CROSS APPLY     (
+                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
+                                FROM    (
+                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
+                                                        ROW_NUMBER() OVER (PARTITION BY cur.precision ORDER BY cur.table_name, cur.column_name) AS rnk
+                                                FROM    #current AS cur
+                                                WHERE   cur.graph_id = cte.graph_id
+                                        ) AS x
+                                WHERE   x.rnk = 1
+                        ) AS wrk
+        WHERE           cte.mi < cte.mx
+                        AND cte.is_replenished = 0
+                        AND cte.log_text IS NULL;
+
+        -- Check indeterministic scale
+        WITH cte_scale(log_text, mi, mx, graph_id, is_replenished)
+        AS (
+                SELECT  fut.log_text,
+                        MIN(COALESCE(fut.scale, -1)) OVER (PARTITION BY fut.graph_id) AS mi,
+                        MAX(COALESCE(fut.scale, -1)) OVER (PARTITION BY fut.graph_id) AS mx,
+                        fut.graph_id,
+                        fut.is_replenished
+                FROM    #future AS fut
+                WHERE   fut.node_count >= 2
+        )
+        UPDATE          cte
+        SET             cte.log_text = CONCAT('Different scale in connected columns {', wrk.column_names, '}.')
+        FROM            cte_scale AS cte
+        CROSS APPLY     (
+                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
+                                FROM    (
+                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
+                                                        ROW_NUMBER() OVER (PARTITION BY cur.scale ORDER BY cur.table_name, cur.column_name) AS rnk
+                                                FROM    #current AS cur
+                                                WHERE   cur.graph_id = cte.graph_id
+                                        ) AS x
+                                WHERE   x.rnk = 1
+                        ) AS wrk
+        WHERE           cte.mi < cte.mx
+                        AND cte.is_replenished = 0
+                        AND cte.log_text IS NULL;
+
+        -- Check indeterministic collation name
+        WITH cte_collation_name(log_text, mi, mx, graph_id, is_replenished)
+        AS (
+                SELECT  fut.log_text,
+                        MIN(COALESCE(fut.collation_name, '')) OVER (PARTITION BY fut.graph_id) AS mi,
+                        MAX(COALESCE(fut.collation_name, '')) OVER (PARTITION BY fut.graph_id) AS mx,
+                        fut.graph_id,
+                        fut.is_replenished
+                FROM    #future AS fut
+                WHERE   fut.node_count >= 2
+        )
+        UPDATE          cte
+        SET             cte.log_text = CONCAT('Different collation name in connected columns {', wrk.column_names, '}.')
+        FROM            cte_collation_name AS cte
+        CROSS APPLY     (
+                                SELECT  STRING_AGG(CAST(x.column_name AS VARCHAR(MAX)), ', ') WITHIN GROUP (ORDER BY x.column_name) AS column_names
+                                FROM    (
+                                                SELECT  CONCAT(QUOTENAME(PARSENAME(cur.table_name, 2)), '.', QUOTENAME(PARSENAME(cur.table_name, 1)), '.', QUOTENAME(cur.column_name)) AS column_name,
+                                                        ROW_NUMBER() OVER (PARTITION BY cur.collation_name ORDER BY cur.table_name, cur.column_name) AS rnk
+                                                FROM    #current AS cur
+                                                WHERE   cur.graph_id = cte.graph_id
+                                        ) AS x
+                                WHERE   x.rnk = 1
+                        ) AS wrk
+        WHERE           cte.mi < cte.mx
+                        AND cte.is_replenished = 0
+                        AND cte.log_text IS NULL;
+
+        UPDATE          cfg
+        SET             cfg.log_text = fut.log_text
+        FROM            tools.atac_configurations AS cfg
+        INNER JOIN      #future AS fut ON fut.table_name = cfg.table_name
+                                AND fut.column_name = cfg.column_name
+        WHERE           fut.log_text IS NOT NULL;
+
+        DELETE  fut
+        FROM    #future AS fut
+        WHERE   fut.log_text IS NOT NULL;
 
         ALTER INDEX ALL ON tools.atac_configurations REBUILD WITH (FILLFACTOR = 100, DATA_COMPRESSION = NONE);
+
+        -- Is there a configuration error
+        IF EXISTS(SELECT * FROM tools.atac_configurations AS cfg WHERE cfg.log_text IS NOT NULL)
+                BEGIN
+                        SELECT          cfg.tag,
+                                        cur.graph_id,
+                                        cfg.table_name,
+                                        cfg.column_name,
+                                        cfg.new_column_name,
+                                        cfg.is_nullable,
+                                        cfg.datatype_name,
+                                        cfg.max_length,
+                                        cfg.precision,
+                                        cfg.scale,
+                                        cfg.collation_name,
+                                        cfg.xml_collection_name,
+                                        cfg.datatype_default_name,
+                                        cfg.datatype_rule_name,
+                                        cfg.log_text
+                        FROM            tools.atac_configurations AS cfg
+                        INNER JOIN      #current AS cur ON cur.table_name = cfg.table_name
+                                                AND cur.column_name = cfg.column_name
+                        WHERE           cfg.log_text IS NOT NULL
+                        ORDER BY        cfg.tag,
+                                        cur.graph_id,
+                                        cur.table_name,
+                                        cur.column_name;
+
+                        RAISERROR('Configuration error. For more information see column log_text.', 16, 1);
+                END;
 
         -- Build statement parts
         WITH cte_configurations(table_id, table_name, column_id, column_name, new_column_name, is_computed, is_user_defined, is_nullable, datatype_name, system_datatype_name, max_length, precision, scale, collation_name, xml_collection_name, datatype_default_name, datatype_rule_name)
@@ -1340,6 +1288,7 @@ BEGIN TRY
                                         AND icl.index_id = ind.index_id
                 INNER JOIN      #configurations AS cfg ON cfg.table_id = icl.object_id
                                         AND cfg.column_id = icl.column_id
+                WHERE           ind.index_id >= 1
 
                 UNION
 
@@ -1350,6 +1299,7 @@ BEGIN TRY
                 FROM            sys.indexes AS ind
                 INNER JOIN      #configurations AS cfg ON cfg.table_id = ind.object_id
                 WHERE           CHARINDEX(QUOTENAME(cfg.column_name), ind.filter_definition COLLATE DATABASE_DEFAULT) >= 1
+                                AND ind.index_id >= 1
 
                 UNION
 
@@ -1363,6 +1313,7 @@ BEGIN TRY
                 INNER JOIN      sys.computed_columns AS cc ON cc.object_id = icl.object_id
                                         AND cc.column_id = icl.column_id
                 WHERE           @database_collation_name IS NOT NULL
+                                AND ind.index_id >= 1
 
                 UNION
 
@@ -1373,6 +1324,7 @@ BEGIN TRY
                 FROM            sys.indexes AS ind
                 WHERE           ind.has_filter = 1
                                 AND @database_collation_name IS NOT NULL
+                                AND ind.index_id >= 1
         )
         INSERT          #index_columns
                         (
@@ -1698,8 +1650,8 @@ BEGIN TRY
 
                 SELECT  fkc.constraint_object_id AS foreign_key_id
                 FROM    sys.foreign_key_columns AS fkc
-                WHERE   EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.parent_object_id AND ixs.column_id = fkc.parent_column_id AND ixs.is_unique = 1)
-                        OR EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.referenced_object_id AND ixs.column_id = fkc.referenced_column_id AND ixs.is_unique = 1)
+                WHERE   EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.parent_object_id AND ixs.column_id = fkc.parent_column_id)
+                        OR EXISTS(SELECT * FROM #index_columns AS ixs WHERE ixs.table_id = fkc.referenced_object_id AND ixs.column_id = fkc.referenced_column_id)
 
                 UNION
 
@@ -2245,22 +2197,39 @@ BEGIN TRY
 
         IF @database_collation_name IS NOT NULL
                 BEGIN
-                        INSERT  tools.atac_queue
-                                (
-                                        action_code,
-                                        status_code,
-                                        sort_order,
-                                        phase,
-                                        entity,
-                                        sql_text
-                                )
-                        SELECT  'aldb' AS action_code,
-                                'L' AS status_code,
-                                200 AS sort_order,
-                                5 AS phase,
-                                DB_NAME() AS entity,
-                                CONCAT(N'DECLARE @sql NVARCHAR(MAX); SELECT @sql = STRING_AGG(CAST(CONCAT(N''KILL '', es.session_id, N'';'') AS NVARCHAR(MAX)), N'' '') WITHIN GROUP (ORDER BY es.session_id) FROM sys.dm_exec_sessions AS es WHERE es.database_id = DB_ID() AND es.session_id <> @@SPID AND es.is_user_process = 1; EXEC (@sql); ALTER DATABASE CURRENT COLLATE ', QUOTENAME(@database_collation_name), ';') AS sql_text
-                        OPTION  (RECOMPILE);
+                        WITH cte_statements(ordinal, sql_text)
+                        AS (
+                                SELECT  1 AS ordinal,
+                                        CONCAT('ALTER DATABASE ', QUOTENAME(DB_NAME()), ' SET SINGLE_USER WITH ROLLBACK IMMEDIATE;') AS sql_text
+
+                                UNION ALL
+
+                                SELECT  2 AS ordinal,
+                                        CONCAT('ALTER DATABASE ', QUOTENAME(DB_NAME()), ' COLLATE ', @database_collation_name, ';') AS sql_text
+
+                                UNION ALL
+
+                                SELECT  3 AS ordinal,
+                                        CONCAT('ALTER DATABASE ', QUOTENAME(DB_NAME()), ' SET MULTI_USER;') AS sql_text
+                        )
+                        INSERT          tools.atac_queue
+                                        (
+                                                action_code,
+                                                status_code,
+                                                sort_order,
+                                                phase,
+                                                entity,
+                                                sql_text
+                                        )
+                        SELECT          'aldb' AS action_code,
+                                        'L' AS status_code,
+                                        200 AS sort_order,
+                                        5 AS phase,
+                                        DB_NAME() AS entity,
+                                        cte.sql_text
+                        FROM            cte_statements AS cte
+                        ORDER BY        cte.ordinal
+                        OPTION          (RECOMPILE);
                 END;
 
         -- alco = Alter column
@@ -2442,7 +2411,7 @@ BEGIN TRY
         RAISERROR('Setting up SQL Agent jobs...', 10, 1) WITH NOWAIT;
 
         -- Clean up
-        SELECT  @sql = STRING_AGG(CAST(CONCAT('EXEC msdb.dbo.sp_delete_job @job_name = ', QUOTENAME(jbs.name COLLATE DATABASE_DEFAULT, ''''), ', @delete_unused_schedule = 1;') AS VARCHAR(MAX)), '; ') WITHIN GROUP (ORDER BY jbs.job_id)
+        SELECT  @sql = STRING_AGG(CAST(CONCAT('EXEC msdb.dbp.sp_delete_job @job_name = ', QUOTENAME(jbs.name COLLATE DATABASE_DEFAULT, ''''), ', @delete_unused_schedule = 1;') AS VARCHAR(MAX)), '; ') WITHIN GROUP (ORDER BY jbs.job_id)
         FROM    msdb.dbo.sysjobs AS jbs
         WHERE   jbs.name COLLATE DATABASE_DEFAULT LIKE 'ATAC - Process%';
 
@@ -2497,7 +2466,7 @@ BEGIN TRY
 
                         WHILE @curr_id <= @number_of_processes
                                 BEGIN
-                                        SET     @sql = CONCAT('EXEC msdb.tools.sp_start_job @job_name = ''ATAC - Process ', @curr_id, ' of ', @number_of_processes, ''';');
+                                        SET     @sql = CONCAT('EXEC msdb.dbo.sp_start_job @job_name = ''ATAC - Process ', @curr_id, ' of ', @number_of_processes, ''';');
 
                                         EXEC    (@sql);
 
