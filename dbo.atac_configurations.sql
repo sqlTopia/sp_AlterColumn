@@ -1,4 +1,4 @@
-IF OBJECT_ID(N'dbo.atac_configurations', 'U') IS NOT NULL
+IF OBJECT_ID(N'dbo.atac_configurations', N'U') IS NOT NULL
         DROP TABLE dbo.atac_configurations;
 GO
 CREATE TABLE    atac_configurations
