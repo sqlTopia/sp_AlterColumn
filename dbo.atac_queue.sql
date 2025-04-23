@@ -1,4 +1,4 @@
-IF OBJECT_ID(N'dbo.atac_queue', 'U') IS NOT NULL
+IF OBJECT_ID(N'dbo.atac_queue', N'U') IS NOT NULL
         DROP TABLE dbo.atac_queue;
 GO
 CREATE TABLE    dbo.atac_queue
