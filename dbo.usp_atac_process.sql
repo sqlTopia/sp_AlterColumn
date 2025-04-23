@@ -1,7 +1,12 @@
-IF OBJECT_ID(N'dbo.usp_atac_process', 'P') IS NULL
-        EXEC(N'CREATE PROCEDURE dbo.usp_atac_process AS');
+IF SCHEMA_ID(N'tools') IS NULL
+        EXEC(N'CREATE SCHEMA tools;');
 GO
-ALTER PROCEDURE dbo.usp_atac_process
+IF OBJECT_ID(N'tools.usp_atac_process', 'P') IS NULL
+        EXEC(N'CREATE PROCEDURE tools.usp_atac_process AS');
+GO
+SET ANSI_NULL, QUOTED_IDENTIFIER ON;
+GO
+ALTER PROCEDURE tools.usp_atac_process
 (
         @process_statements INT = 2147483647,
         @maximum_retry_count TINYINT = 100,
@@ -69,20 +74,20 @@ DECLARE @process TABLE
 
 BEGIN TRY
         -- Get current phase
-        SELECT TOP(1)   @current_phase = aqe.phase
-        FROM            dbo.atac_queue AS aqe
-        WHERE           aqe.status_code = 'R'
-        ORDER BY        aqe.statement_id
+        SELECT TOP(1)   @current_phase = taq.phase
+        FROM            tools.atac_queue AS taq
+        WHERE           taq.status_code = 'R'
+        ORDER BY        taq.statement_id
         OPTION          (MAXDOP 1);
 
         -- Get current maximum phase
-        SELECT TOP(1)   @max_phase = aqe.phase
-        FROM            dbo.atac_queue AS aqe
-        ORDER BY        aqe.phase DESC
+        SELECT TOP(1)   @max_phase = taq.phase
+        FROM            tools.atac_queue AS taq
+        ORDER BY        taq.phase DESC
         OPTION          (MAXDOP 1);
 
         -- Keep iterating as long as there are statements to be executed
-        WHILE EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.status_code IN ('L', 'R'))
+        WHILE EXISTS(SELECT * FROM tools.atac_queue AS taq WHERE taq.status_code IN ('L', 'R'))
                 BEGIN
                         -- Get next statement ordered by phase and statement_id
                         WHILE @current_phase <= @max_phase
@@ -92,19 +97,19 @@ BEGIN TRY
 
                                         WITH cte_queue(statement_id, status_code, session_id, entity, action_code, statement_start, statement_end, sql_text, log_text)
                                         AS (
-                                                SELECT TOP(1)   aqe.statement_id,
-                                                                aqe.status_code,
-                                                                aqe.session_id,
-                                                                aqe.entity,
-                                                                aqe.action_code,
-                                                                aqe.statement_start,
-                                                                aqe.statement_end,
-                                                                aqe.sql_text,
-                                                                aqe.log_text
-                                                FROM            dbo.atac_queue AS aqe
-                                                WHERE           aqe.status_code = 'R'
-                                                                AND aqe.phase = @current_phase
-                                                ORDER BY        aqe.statement_id
+                                                SELECT TOP(1)   taq.statement_id,
+                                                                taq.status_code,
+                                                                taq.session_id,
+                                                                taq.entity,
+                                                                taq.action_code,
+                                                                taq.statement_start,
+                                                                taq.statement_end,
+                                                                taq.sql_text,
+                                                                taq.log_text
+                                                FROM            tools.atac_queue AS taq
+                                                WHERE           taq.status_code = 'R'
+                                                                AND taq.phase = @current_phase
+                                                ORDER BY        taq.statement_id
                                         )
                                         UPDATE  cte
                                         SET     cte.status_code = 'W',
@@ -165,12 +170,12 @@ BEGIN TRY
                                                                                         END;
 
                                                                                 -- Update processed and end time
-                                                                                UPDATE  aqe
-                                                                                SET     aqe.status_code = 'F',
-                                                                                        aqe.statement_end = @end_time,
-                                                                                        aqe.log_text = NULL
-                                                                                FROM    dbo.atac_queue AS aqe
-                                                                                WHERE   aqe.statement_id = @statement_id
+                                                                                UPDATE  taq
+                                                                                SET     taq.status_code = 'F',
+                                                                                        taq.statement_end = @end_time,
+                                                                                        taq.log_text = NULL
+                                                                                FROM    tools.atac_queue AS taq
+                                                                                WHERE   taq.statement_id = @statement_id
                                                                                 OPTION  (MAXDOP 1);
 
                                                                                 -- Decrease execution counter
@@ -182,21 +187,21 @@ BEGIN TRY
                                                                         BEGIN CATCH
                                                                                 SET     @error_number = ERROR_NUMBER();
 
-                                                                                UPDATE  aqe 
-                                                                                SET     aqe.status_code = 'E',
-                                                                                        aqe.log_text = CONCAT('(', ERROR_NUMBER(), ') ', ERROR_MESSAGE())
-                                                                                FROM    dbo.atac_queue AS aqe
-                                                                                WHERE   aqe.statement_id = @statement_id
+                                                                                UPDATE  taq 
+                                                                                SET     taq.status_code = 'E',
+                                                                                        taq.log_text = CONCAT('(', ERROR_NUMBER(), ') ', ERROR_MESSAGE())
+                                                                                FROM    tools.atac_queue AS taq
+                                                                                WHERE   taq.statement_id = @statement_id
                                                                                 OPTION  (MAXDOP 1);
 
                                                                                 IF @action_code NOT IN ('cltb', 'remo')
                                                                                         BEGIN
-                                                                                                UPDATE  aqe
-                                                                                                SET     aqe.status_code = 'E',
-                                                                                                        aqe.log_text = CONCAT('An earlier execution for same entity went wrong (statement #', @statement_id, ').')
-                                                                                                FROM    dbo.atac_queue AS aqe
-                                                                                                WHERE   aqe.statement_id > @statement_id
-                                                                                                        AND aqe.entity = @entity
+                                                                                                UPDATE  taq
+                                                                                                SET     taq.status_code = 'E',
+                                                                                                        taq.log_text = CONCAT('An earlier execution for same entity went wrong (statement #', @statement_id, ').')
+                                                                                                FROM    dbo.atac_queue AS taq
+                                                                                                WHERE   taq.statement_id > @statement_id
+                                                                                                        AND taq.entity = @entity
                                                                                                 OPTION  (MAXDOP 1);
                                                                                         END;
                                                                         END CATCH;
@@ -237,17 +242,17 @@ BEGIN TRY
                                                 END;
 
                                         -- Check if available statements at current phase
-                                        IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.phase = @current_phase AND aqe.status_code IN ('L', 'R', 'W'))
+                                        IF EXISTS(SELECT * FROM tools.atac_queue AS taq WHERE taq.phase = @current_phase AND taq.status_code IN ('L', 'R', 'W'))
                                                 BEGIN
                                                         -- Unlock next statement for specific entity
                                                         WITH cte_phase
                                                         AS (
-                                                                SELECT TOP(1)   aqe.status_code
-                                                                FROM            dbo.atac_queue AS aqe
-                                                                WHERE           aqe.phase = @current_phase
-                                                                                AND aqe.entity = @entity
-                                                                                AND aqe.status_code IN ('L', 'R')
-                                                                ORDER BY        aqe.statement_id
+                                                                SELECT TOP(1)   taq.status_code
+                                                                FROM            tools.atac_queue AS taq
+                                                                WHERE           taq.phase = @current_phase
+                                                                                AND taq.entity = @entity
+                                                                                AND taq.status_code IN ('L', 'R')
+                                                                ORDER BY        taq.statement_id
                                                         )
                                                         UPDATE  cte
                                                         SET     cte.status_code = 'R'
@@ -263,7 +268,7 @@ BEGIN TRY
                                         ELSE
                                                 BEGIN
                                                         -- Check for errors in current phase
-                                                        IF EXISTS(SELECT * FROM dbo.atac_queue AS aqe WHERE aqe.phase = @current_phase AND aqe.status_code = 'E' AND aqe.action_code <> 'remo')
+                                                        IF EXISTS(SELECT * FROM tools.atac_queue AS taq WHERE taq.phase = @current_phase AND taq.status_code = 'E' AND taq.action_code <> 'remo')
                                                                 BEGIN
                                                                         -- Not allowed to continue with next phase when errors exist in current
                                                                         SET     @process_statements = 0;
@@ -285,11 +290,11 @@ BEGIN TRY
                                                         -- Unlock first statement for each entity
                                                         WITH cte_phase
                                                         AS (
-                                                                SELECT  aqe.status_code,
-                                                                        ROW_NUMBER() OVER (PARTITION BY aqe.entity ORDER BY aqe.statement_id) AS rnk
-                                                                FROM    dbo.atac_queue AS aqe
-                                                                WHERE   aqe.phase = @current_phase
-                                                                        AND aqe.status_code IN ('E', 'W', 'L', 'R')
+                                                                SELECT  taq.status_code,
+                                                                        ROW_NUMBER() OVER (PARTITION BY taq.entity ORDER BY taq.statement_id) AS rnk
+                                                                FROM    tools.atac_queue AS taq
+                                                                WHERE   taq.phase = @current_phase
+                                                                        AND taq.status_code IN ('E', 'W', 'L', 'R')
                                                         )
                                                         UPDATE  cte
                                                         SET     cte.status_code = 'R'
