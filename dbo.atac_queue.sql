@@ -1,33 +1,36 @@
-IF OBJECT_ID(N'dbo.atac_queue', N'U') IS NOT NULL
-        DROP TABLE dbo.atac_queue;
+IF SCHEMA_ID(N'tools') IS NULL
+        EXEC(N'CREATE SCHEMA tools;');
 GO
-CREATE TABLE    dbo.atac_queue
+IF OBJECT_ID(N'tools.atac_queue', N'U') IS NOT NULL
+        DROP TABLE tools.atac_queue;
+GO
+CREATE TABLE    tools.atac_queue
                 (
-                        statement_id INT NOT NULL CONSTRAINT df_atac_queue_statement_id DEFAULT (1) CONSTRAINT ck_atac_queue_statement_id CHECK (statement_id >= 1),
+                        statement_id INT NOT NULL CONSTRAINT df_tools_atac_queue_statement_id DEFAULT (1) CONSTRAINT ck_tools_atac_queue_statement_id CHECK (statement_id >= 1),
                         action_code CHAR(4) NOT NULL,
                         session_id SMALLINT NULL,
-                        status_code CHAR(1) NOT NULL CONSTRAINT ck_atac_queue_status_code CHECK (
-                                                                                                           status_code = 'E'    -- Error
-                                                                                                        OR status_code = 'F'    -- Finished
-                                                                                                        OR status_code = 'L'    -- Locked
-                                                                                                        OR status_code = 'R'    -- Ready
-                                                                                                        OR status_code = 'W'    -- Working
-                                                                                                ),
+                        status_code CHAR(1) NOT NULL CONSTRAINT ck_tools_atac_queue_status_code CHECK (
+                                                                                                                  status_code = 'E'    -- Error
+                                                                                                               OR status_code = 'F'    -- Finished
+                                                                                                               OR status_code = 'L'    -- Locked
+                                                                                                               OR status_code = 'R'    -- Ready
+                                                                                                               OR status_code = 'W'    -- Working
+                                                                                                      ),
                         statement_start DATETIME2(3) NULL,
                         statement_end DATETIME2(3) NULL,
                         statement_time AS (DATEADD(MILLISECOND, DATEDIFF(MILLISECOND, statement_start, COALESCE(statement_end, SYSDATETIME())), CAST('00:00:00.000' AS TIME(3)))),
-                        log_text VARCHAR(MAX) NULL CONSTRAINT ck_atac_queue_log_text CHECK (log_text > ''),
+                        log_text VARCHAR(MAX) NULL CONSTRAINT ck_tools_atac_queue_log_text CHECK (log_text > ''),
                         queue_id INT IDENTITY(1, 1) NOT NULL,
                         sort_order SMALLINT NOT NULL,
                         entity VARCHAR(257) NOT NULL,
                         phase TINYINT NOT NULL,
-                        sql_text VARCHAR(MAX) NOT NULL CONSTRAINT ck_atac_queue_sql_text CHECK (sql_text > ''),
-                        CONSTRAINT ck_atac_queue_time CHECK     (
+                        sql_text VARCHAR(MAX) NOT NULL CONSTRAINT ck_tools_atac_queue_sql_text CHECK (sql_text > ''),
+                        CONSTRAINT ck_tools_atac_queue_time CHECK (
                                                                            statement_start IS NULL AND statement_end IS NULL
                                                                         OR statement_start IS NOT NULL AND statement_end IS NULL
                                                                         OR statement_start <= statement_end
-                                                                ),
-                        CONSTRAINT ck_atac_queue_action_code_sort_order_phase CHECK     (
+                                                                  ),
+                        CONSTRAINT ck_tools_atac_queue_action_code_sort_order_phase CHECK (
                                                                                                    action_code = 'didt' AND sort_order =   0 AND phase = 0      -- Disable database triggers
                                                                                                 OR action_code = 'drdt' AND sort_order =  10 AND phase = 0      -- Drop database triggers
 
@@ -87,6 +90,6 @@ CREATE TABLE    dbo.atac_queue
 
                                                                                                 OR action_code = 'crdt' AND sort_order = 430 AND phase = 14     -- Create database triggers
                                                                                                 OR action_code = 'endt' AND sort_order = 440 AND phase = 14     -- Enable database triggers
-                                                                                        )
+                                                                                         )
                 );
 GO
